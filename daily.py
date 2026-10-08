@@ -123,6 +123,7 @@ def ai(task, facts, max_chars):
         txt = "".join(b.text for b in r.content if b.type == "text").strip()
         if len(txt) > max_chars:                       # cut at a line break, never mid-sentence
             txt = txt[:max_chars].rsplit("\n", 1)[0].strip()
+        print(f"  · AI copy ok ({r.model}, {len(txt)} chars)")
         return txt or None
     except Exception as e:
         print(f"  ! AI copy failed, using template: {e}")
