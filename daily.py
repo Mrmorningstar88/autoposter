@@ -23,6 +23,7 @@ from email.utils import parsedate_to_datetime
 
 import requests
 import scrape as S
+import slots
 
 TZ = S.TZ
 C = S.CLEAN
@@ -935,6 +936,11 @@ def run(hour, live):
             except Exception as e:
                 import traceback; traceback.print_exc()
                 print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"])
+        if live and not S.FAILURES:                      # later cron attempts for this slot will skip it
+            done = st.setdefault("_done", {})
+            done[slots.done_key(hour)] = time.time()
+            for k in [k for k, t in done.items() if time.time() - t > 8 * 86400]:
+                del done[k]
     finally:
         if live:
             save(st)                                     # keep poll results, offsets and posted flags even after an error

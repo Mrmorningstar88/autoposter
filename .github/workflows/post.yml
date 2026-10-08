@@ -2,13 +2,11 @@ name: Post charts to Telegram
 
 on:
   schedule:
-    # GitHub cron is UTC. Brazil (BRT) = UTC-3. Mon–Fri. 17:00 BRT is posted by hand.
-    - cron: "0 12 * * 1-5"   # 09:00 BRT  good morning + market prices
-    - cron: "0 14 * * 1-5"   # 11:00 BRT  asset overview (poll winner)
-    - cron: "0 16 * * 1-5"   # 13:00 BRT  signal / signal result
-    - cron: "0 18 * * 1-5"   # 15:00 BRT  poll
-    - cron: "0 22 * * 1-5"   # 19:00 BRT  signal / signal result
-    - cron: "0 0 * * 2-6"    # 21:00 BRT  news roundup (00:00 UTC next day)
+    # GitHub cron is UTC; Brazil (BRT) = UTC-3. Slots 09/11/13/15/19 BRT Mon–Fri and 21 BRT (00 UTC Tue–Sat).
+    # GitHub drops and delays scheduled runs, so each slot gets three attempts; the first one that runs posts it
+    # and the others skip (slots.py). 17:00 BRT is posted by hand.
+    - cron: "0,20,40 12,14,16,18,22 * * 1-5"
+    - cron: "0,20,40 0 * * 2-6"
   workflow_dispatch:
     inputs:
       mode:
@@ -39,11 +37,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -r requirements.txt
       - name: Restore memory (posted signals, polls, source channel position)
         id: mem
         uses: actions/cache/restore@v4
@@ -58,23 +51,30 @@ jobs:
         run: |
           N=$(gh cache list -R "${{ github.repository }}" --key post-state- --json key -q 'length' 2>/dev/null || echo err)
           [ "$N" = "0" ] || { echo "::error::saved state exists but restore failed ($N); not posting with empty memory"; exit 1; }
-      - name: Pick slot
+      - name: Pick slot (skip if this slot was already posted)
         id: slot
         run: |
-          case "${{ github.event.schedule }}" in
-            "0 12 * * 1-5") echo "hour=9"  >> "$GITHUB_OUTPUT" ;;
-            "0 14 * * 1-5") echo "hour=11" >> "$GITHUB_OUTPUT" ;;
-            "0 16 * * 1-5") echo "hour=13" >> "$GITHUB_OUTPUT" ;;
-            "0 18 * * 1-5") echo "hour=15" >> "$GITHUB_OUTPUT" ;;
-            "0 22 * * 1-5") echo "hour=19" >> "$GITHUB_OUTPUT" ;;
-            "0 0 * * 2-6")  echo "hour=21" >> "$GITHUB_OUTPUT" ;;
-            *)              echo "hour=${{ inputs.hour }}" >> "$GITHUB_OUTPUT" ;;
-          esac
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "hour=${{ inputs.hour }}" >> "$GITHUB_OUTPUT"
+          else
+            H=$(python3 slots.py due state.json)
+            echo "hour=$H" >> "$GITHUB_OUTPUT"
+            [ -n "$H" ] && echo "posting the ${H}h slot" || echo "nothing due (already posted or outside a slot window)"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.slot.outputs.hour != ''
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+        if: steps.slot.outputs.hour != ''
       - name: Check bot access
+        if: steps.slot.outputs.hour != ''
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         run: python scrape.py channels
       - name: Post
+        if: steps.slot.outputs.hour != ''
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
@@ -103,7 +103,7 @@ jobs:
           fi
           [ -n "$NUM" ] && gh issue comment "$NUM" -R "$R" --body-file report.md
       - name: Save memory
-        if: always()
+        if: always() && steps.slot.outputs.hour != ''      # skipped attempts change nothing
         uses: actions/cache/save@v4
         with:
           path: state.json
