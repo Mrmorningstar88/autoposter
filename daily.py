@@ -533,6 +533,9 @@ def pull_updates(ch, ctx):
             who = str(m["chat"].get("username", "")).lower()
             print(f"  · private message from @{who} — chat id {m['chat']['id']}")
             if who and who == str(ch.get("dm", "")).lstrip("@").lower() and ctx["live"]:
+                if d.get("owner_id") != m["chat"]["id"]:
+                    S.tg(token, "sendMessage", data={"chat_id": m["chat"]["id"], "text":
+                         f"✅ Conectado ao {ch['chat']}. Você vai receber aqui os relatórios das enquetes e qualquer alerta do autoposter."})
                 d["owner_id"] = m["chat"]["id"]
                 print("    → saved as the owner: poll reports and alerts go here")
             continue
@@ -903,7 +906,10 @@ def run(hour, live):
             ctx = dict(d=cd, live=live, basis=basis, hour=hour)
             try:
                 if os.getenv(ch["token_env"]):
-                    pull_updates(ch, ctx)
+                    try:
+                        pull_updates(ch, ctx)
+                    except Exception as e:                   # a slow getUpdates must not cost the slot its post
+                        print(f"  ! could not read bot updates: {e}")
                 for it in fn(ch, ctx):
                     if isinstance(it, dict) and "poll" in it:
                         send_poll(ch, it["poll"], ctx); continue
