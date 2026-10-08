@@ -167,8 +167,10 @@ REPORT_FILE = os.path.join(S.HERE, "report.md")      # picked up by the workflow
 
 
 def owner_chat(ch, ctx):
-    """Who gets the reports: OWNER_CHAT_ID, else channels.json owner_chat, else the channel's creator (found via the bot)."""
-    owner = os.getenv("OWNER_CHAT_ID") or ch.get("owner_chat") or ctx["d"].get("creator_id")
+    """Who gets the reports: OWNER_CHAT_ID / channels.json owner_chat (numeric ids only), else the dm handle once it has
+    pressed Start on the bot, else the channel's creator (found via the bot). Bots cannot message a user by @username."""
+    numeric = [v for v in (os.getenv("OWNER_CHAT_ID"), ch.get("owner_chat")) if v and str(v).lstrip("-").isdigit()]
+    owner = (numeric or [None])[0] or ctx["d"].get("owner_id") or ctx["d"].get("creator_id")
     if owner or not ctx["live"]:
         return owner
     j = S.tg(os.getenv(ch["token_env"]), "getChatAdministrators", data={"chat_id": ch["chat"]})
@@ -274,19 +276,23 @@ def slot_morning(ch, ctx):
 
 
 # ================================================================= polls (15:00) and their results
-def close_poll(ch, ctx):
-    """Stop yesterday's poll, store the result, report it to the owner. Returns the closed poll record or None."""
+def close_poll(ch, ctx, late=False):
+    """Stop the open poll, store the result, report it to the owner. Returns the closed poll record or None.
+    late=True when the 15:00 run closes it (the 11:00 run was missed)."""
     d = ctx["d"]
     op = d.get("open_poll")
     if not op or not ctx["live"]:
         return None
     j = S.tg(os.getenv(ch["token_env"]), "stopPoll", data={"chat_id": ch["chat"], "message_id": op["message_id"]})
-    if not j.get("ok"):
+    poll = j.get("result") if j.get("ok") else op.get("last")      # stopped by hand: use the last poll update the bot saw
+    if not poll:
+        desc = str(j.get("description", "")).lower()
         print(f"  ! could not close poll {op['message_id']}: {j.get('description')}")
-        if "not found" in str(j.get("description", "")).lower() or time.time() - op["ts"] > 3 * 86400:
+        if any(x in desc for x in ("not found", "can't be stopped", "already")) or time.time() - op["ts"] > 3 * 86400:
             d.pop("open_poll", None)
+            safe_report(ch, ctx, f"⚠️ A enquete de {datetime.fromtimestamp(op['ts'], TZ):%d/%m} foi encerrada fora do bot "
+                                 f"({j.get('description')}); o resultado não pôde ser lido.")
         return None
-    poll = j["result"]
     counts = {k: o["voter_count"] for k, o in zip(op["keys"], poll["options"])}
     total = poll.get("total_voter_count", sum(counts.values()))
     winner = max(counts, key=counts.get) if total else None
@@ -299,12 +305,23 @@ def close_poll(ch, ctx):
         pref[k] *= 0.85
     for k, v in counts.items():
         pref[k] = pref.get(k, 0) + (v / total if total else 0)
-    members = S.tg(os.getenv(ch["token_env"]), "getChatMemberCount", data={"chat_id": ch["chat"]}).get("result")
+    try:
+        members = S.tg(os.getenv(ch["token_env"]), "getChatMemberCount", data={"chat_id": ch["chat"]}).get("result")
+    except Exception:
+        members = None
     rec["members"] = members
     prev = [p["total"] for p in d["polls"][-8:-1]]
     avg = sum(prev) / len(prev) if prev else None
     trend = " · ".join(str(p["total"]) for p in d["polls"][-6:])
     top = sorted(pref.items(), key=lambda x: -x[1])[:3]
+    if not winner:
+        adjust = "Sem votos: a análise das 11h usa o ativo que mais se moveu."
+    elif late:
+        adjust = (f"Encerrada às 15h (a execução das 11h não rodou). {A[winner]['label']} será analisado na próxima 11h "
+                  f"se a nova enquete não tiver votos.")
+    else:
+        adjust = (f"Ajuste: a análise das 11h é sobre {A[winner]['label']}; as próximas enquetes e os setups priorizam "
+                  + ", ".join(A[k]["label"] for k, _ in top[:2]) + ".")
     lines = [f"📊 Enquete de {rec['date']} · {ch['chat']}",
              f"Votantes: {total}" + (f" de {members} inscritos ({total / members:.0%} engajados)" if members else "")
              + (f" · média anterior {avg:.1f}" if avg is not None else ""),
@@ -312,20 +329,26 @@ def close_poll(ch, ctx):
                for k, v in sorted(counts.items(), key=lambda x: -x[1])],
              f"Últimas enquetes (votantes): {trend}",
              "Preferência acumulada: " + ", ".join(f"{A[k]['label']} {v:.2f}" for k, v in top),
-             f"Ajuste: a análise das 11h é sobre {A[winner]['label']}; as próximas enquetes e os setups priorizam "
-             + ", ".join(A[k]["label"] for k, _ in top[:2]) + "." if winner
-             else "Sem votos: a análise das 11h usa o ativo que mais se moveu."]
-    notify_owner(ch, "\n".join(lines), ctx)
+             adjust]
+    safe_report(ch, ctx, "\n".join(lines))
     return rec
 
 
+def safe_report(ch, ctx, text):
+    try:
+        notify_owner(ch, text, ctx)
+    except Exception as e:                                # a report must never block the slot's post
+        print(f"  ! report not delivered: {e}")
+
+
 def poll_options(d):
+    """Two audience favourites + the two assets offered longest ago (never-offered first), so every asset rotates in."""
     pref = d.get("pref", {})
-    last = set((d.get("polls") or [{}])[-1].get("counts", {}).keys())
     ranked = sorted(POLL_POOL, key=lambda k: -pref.get(k, 0))
-    opts = ranked[:2] + [k for k in POLL_POOL if k not in ranked[:2] and k not in last]
-    opts += [k for k in POLL_POOL if k not in opts]
-    return opts[:4]
+    polls = d.get("polls", [])
+    age = lambda k: max((i for i, p in enumerate(polls) if k in p.get("counts", {})), default=-1)
+    rest = sorted((k for k in POLL_POOL if k not in ranked[:2]), key=age)
+    return ranked[:2] + rest[:2]
 
 
 POLL_ICON = {"XAUUSD": "🥇", "EURUSD": "💶", "GBPUSD": "💷", "BTCUSD": "🪙", "WTI": "🛢", "USDJPY": "💴", "XAGUSD": "🥈"}
@@ -337,8 +360,11 @@ POLL_Q = ["📊 Qual ativo você quer que eu analise amanhã às 11h?",
 
 def slot_poll(ch, ctx):
     d = ctx["d"]
-    close_poll(ch, ctx)
-    return [{"poll": dict(question=pick(POLL_Q), keys=poll_options(d))}]
+    close_poll(ch, ctx, late=True)
+    q = pick(POLL_Q)
+    if datetime.now(TZ).weekday() == 4:                      # Friday: the next 11:00 run is on Monday
+        q = q.replace("amanhã", "segunda-feira").replace("Amanhã", "Segunda-feira")
+    return [{"poll": dict(question=q, keys=poll_options(d))}]
 
 
 def send_poll(ch, spec, ctx):
@@ -351,7 +377,8 @@ def send_poll(ch, spec, ctx):
                    "disable_notification": ctx["hour"] in (ch.get("quiet_hours") or [])})
     print(f"  → {ch['chat']} poll: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
     if j.get("ok"):
-        ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time())
+        ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time(),
+                                     poll_id=j["result"].get("poll", {}).get("id"))
     else:
         S.FAILURES.append(ch["chat"])
 
@@ -359,8 +386,10 @@ def send_poll(ch, spec, ctx):
 # ================================================================= 11:00 overview
 def slot_overview(ch, ctx):
     d = ctx["d"]
-    rec = close_poll(ch, ctx) or next((p for p in reversed(d.get("polls", [])) if not p["reviewed"] and p["winner"]
-                                       and p["date"] >= (datetime.now(TZ) - timedelta(days=4)).strftime("%Y-%m-%d")), None)
+    rec = close_poll(ch, ctx)
+    if not (rec and rec.get("winner")):
+        cutoff = (datetime.now(TZ) - timedelta(days=4)).strftime("%Y-%m-%d")
+        rec = next((p for p in reversed(d.get("polls", [])) if not p["reviewed"] and p["winner"] and p["date"] >= cutoff), None)
     qs = quotes(list(A), ctx["basis"])
     if rec and rec.get("winner") in TRADABLE:
         focus, voted = rec["winner"], rec
@@ -368,7 +397,8 @@ def slot_overview(ch, ctx):
         cand = [k for k in TRADABLE if k in qs and k != d.get("last_focus")]
         focus, voted = max(cand, key=lambda k: abs(qs[k]["chg"]) * (1 + d.get("pref", {}).get(k, 0))), None
     p, facts = overview_card(focus, qs, ctx["basis"])
-    if ctx["live"]:
+
+    def posted():
         d["last_focus"] = focus
         if voted:
             voted["reviewed"] = True
@@ -376,7 +406,7 @@ def slot_overview(ch, ctx):
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
              f"e como os ativos relacionados se moveram. Termine com o que observar no dia.", facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
-    return [(p, cap)]
+    return [(p, cap, {"after": posted})]
 
 
 def template_overview(focus, f):
@@ -478,13 +508,14 @@ def parse_signal(text):
     return dict(name=name, side=sd, entry=entry, sl=s, tp1=tp1, tp2=tp2, at_market="LIMIT" not in t)
 
 
-def read_source(ch, ctx):
-    """Pull new posts from the source channel (the bot must be an admin there) into state."""
+def pull_updates(ch, ctx):
+    """Every run: read the bot's updates. Source-channel signals go to state, the owner's chat id is learnt from a
+    private message by the dm handle, and poll updates keep the latest vote counts (used if a poll is closed by hand)."""
     d, token = ctx["d"], os.getenv(ch["token_env"])
     if not token:
         return
     j = S.tg(token, "getUpdates", data={"offset": d.get("offset", 0), "timeout": 0,
-                                         "allowed_updates": json.dumps(["channel_post", "message", "my_chat_member"])})
+                                         "allowed_updates": json.dumps(["channel_post", "message", "my_chat_member", "poll"])})
     if not j.get("ok"):
         print(f"  ! getUpdates: {j.get('description')}"); return
     want = str(ch.get("signal_source") or "AFX").lower()
@@ -492,9 +523,18 @@ def read_source(ch, ctx):
     for u in j["result"]:
         if ctx["live"]:
             d["offset"] = u["update_id"] + 1
+        pl = u.get("poll")
+        op = d.get("open_poll")
+        if pl and op and pl.get("id") == op.get("poll_id"):
+            op["last"] = pl
+            continue
         m = u.get("message")
-        if m and m.get("chat", {}).get("type") == "private":   # helps the owner find OWNER_CHAT_ID
-            print(f"  · private message from @{m['chat'].get('username')} — chat id {m['chat']['id']}")
+        if m and m.get("chat", {}).get("type") == "private":
+            who = str(m["chat"].get("username", "")).lower()
+            print(f"  · private message from @{who} — chat id {m['chat']['id']}")
+            if who and who == str(ch.get("dm", "")).lstrip("@").lower() and ctx["live"]:
+                d["owner_id"] = m["chat"]["id"]
+                print("    → saved as the owner: poll reports and alerts go here")
             continue
         cm = u.get("my_chat_member")
         if cm:
@@ -523,7 +563,6 @@ def tf_for(name):
 
 def slot_signal(ch, ctx):
     d = ctx["d"]
-    read_source(ch, ctx)
     now = time.time()
     # 1. a fresh signal from the source channel, posted inside Brazilian daytime
     for s in sorted(d.get("src", []), key=lambda s: -s["ts"]):
@@ -534,8 +573,7 @@ def slot_signal(ch, ctx):
             continue
         item = signal_post(ch, ctx, s, source=True)
         if item:
-            if ctx["live"]:
-                s["posted"] = True
+            item[2]["after"] = lambda s=s: s.update(posted=True)
             return [item]
     # 2. how an earlier signal played out
     item = followup_post(ch, ctx)
@@ -615,11 +653,12 @@ def followup_post(ch, ctx):
             print(f"  ! result check failed for {sig['key']}: {e}"); continue
         if st_ in ("open",):
             continue
-        if ctx["live"]:
-            sig["followed"] = True
         if st_ == "expired":
+            if ctx["live"]:
+                sig["followed"] = True
             continue
-        return result_card(ch, sig, st_, basis)
+        p, cap = result_card(ch, sig, st_, basis)
+        return (p, cap, {"after": lambda sig=sig: sig.update(followed=True)})
     return None
 
 
@@ -855,32 +894,36 @@ def run(hour, live):
     print(f"  {hour:02d}:00 {S.TZ_LABEL} · {kind}{'' if live else ' (dry-run)'}")
     d, st = load()
     basis = S.gold_basis(None)
-    for ch in S.load_channels():
-        if ch.get("slots") is not None and hour not in ch["slots"]:
-            print(f"  {ch['chat']}: slot {hour} not enabled in channels.json"); continue
-        S.use_branding(ch)
-        cd = d.setdefault(str(ch["chat"]), {})
-        ctx = dict(d=cd, live=live, basis=basis, hour=hour)
-        try:
-            items = fn(ch, ctx)
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"]); continue
-        for it in items:
-            if isinstance(it, dict) and "poll" in it:
-                send_poll(ch, it["poll"], ctx); continue
-            if isinstance(it, dict) and "album" in it:
-                send_album(ch, it["album"], it["cap"], live, hour); continue
-            path, cap, extra = (tuple(it) + ({},))[:3]
-            j = send_photo(ch, path, cap, live, hour)
-            if j.get("ok") and extra.get("poll"):
-                send_poll(ch, extra["poll"], ctx)
-            if j.get("ok") and extra.get("signal") and live:
-                cd.setdefault("signals", []).append(extra["signal"])
-                cd["signals"] = [s for s in cd["signals"] if time.time() - s["ts"] < 7 * 86400]
-            time.sleep(1)
-    if live:
-        save(st)
+    try:
+        for ch in S.load_channels():
+            if ch.get("slots") is not None and hour not in ch["slots"]:
+                print(f"  {ch['chat']}: slot {hour} not enabled in channels.json"); continue
+            S.use_branding(ch)
+            cd = d.setdefault(str(ch["chat"]), {})
+            ctx = dict(d=cd, live=live, basis=basis, hour=hour)
+            try:
+                if os.getenv(ch["token_env"]):
+                    pull_updates(ch, ctx)
+                for it in fn(ch, ctx):
+                    if isinstance(it, dict) and "poll" in it:
+                        send_poll(ch, it["poll"], ctx); continue
+                    if isinstance(it, dict) and "album" in it:
+                        send_album(ch, it["album"], it["cap"], live, hour); continue
+                    path, cap, extra = (tuple(it) + ({},))[:3]
+                    j = send_photo(ch, path, cap, live, hour)
+                    if j.get("ok") and live:
+                        if extra.get("after"):
+                            extra["after"]()
+                        if extra.get("signal"):
+                            cd.setdefault("signals", []).append(extra["signal"])
+                            cd["signals"] = [x for x in cd["signals"] if time.time() - x["ts"] < 7 * 86400]
+                    time.sleep(1)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"])
+    finally:
+        if live:
+            save(st)                                     # keep poll results, offsets and posted flags even after an error
 
 
 def report():

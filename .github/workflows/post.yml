@@ -48,7 +48,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: post-state-${{ github.run_id }}
+          key: post-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: post-state-
       - name: Pick slot
         id: slot
@@ -98,7 +98,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: state.json
-          key: post-state-${{ github.run_id }}
+          key: post-state-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Keep images as run artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -128,6 +128,7 @@ jobs:
             gh issue create -R "${{ github.repository }}" --title "Autoposter: a scheduled post failed" --label autoposter-alert \
               --body "$MSG"$'\n\n'"Close this issue once it is fixed; the next failure opens a new one."
           fi
-          if [ -n "$OWNER_CHAT_ID" ]; then
-            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" -d chat_id="$OWNER_CHAT_ID" --data-urlencode text="$MSG" >/dev/null
+          OWNER=$(python3 -c "import json,os,sys; e=os.getenv('OWNER_CHAT_ID','').strip(); d=json.load(open('state.json')).get('_daily',{}) if os.path.exists('state.json') else {}; ids=[v.get('owner_id') or v.get('creator_id') for v in d.values() if isinstance(v,dict)]; print(e if e.lstrip('-').isdigit() else next((i for i in ids if i),''))" 2>/dev/null || true)
+          if [ -n "$OWNER" ]; then
+            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" -d chat_id="$OWNER" --data-urlencode text="$MSG" >/dev/null
           fi

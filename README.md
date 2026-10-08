@@ -17,7 +17,7 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 1. **Bot token**: repo **Settings → Secrets and variables → Actions → `TG_BOT_TOKEN`**. The bot must be an admin of @sanstostrades.
 2. **Signal source**: add the same bot as an admin of the source channel (AFX | Сигналы). `signal_source` in `channels.json` is matched against the source channel's title or id.
 3. **DM hook**: put your Telegram handle in `channels.json` → `"dm": "@yourhandle"`.
-4. **Poll reports to you** (optional): send any message to the bot, run any slot, find `private message from @you — chat id 123…` in the run log, and save that number as the secret `OWNER_CHAT_ID`. Reports also appear in each run's summary page, and **Actions → Run workflow → mode = report** shows the full poll history.
+4. **Poll reports and alerts by Telegram**: open the bot in Telegram and press **Start** (as the `dm` handle). The next run learns your chat id automatically. Reports are also posted as comments on the "📊 Relatório de enquetes" issue.
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.
 
 ## When something breaks
