@@ -1273,9 +1273,13 @@ def tg(token, method, **kw):
     return j
 
 
+FAILURES = []                                        # any problem here makes the GitHub run go red
+
+
 def cmd_channels_check():
     """Verify the bot can post in every configured channel."""
     for ch in load_channels():
+        ok_before = len(FAILURES); FAILURES.append(ch["chat"])  # removed again below if the channel is ready
         token = os.getenv(ch["token_env"])
         if not token:
             print(f"  {ch['chat']:24s} ✗ env {ch['token_env']} not set"); continue
@@ -1288,6 +1292,8 @@ def cmd_channels_check():
         mem = tg(token, "getChatMember", data={"chat_id": ch["chat"], "user_id": me["result"]["id"]})
         r = mem.get("result", {})
         can = r.get("status") == "creator" or (r.get("status") == "administrator" and r.get("can_post_messages", True))
+        if can:
+            del FAILURES[ok_before:]
         print(f"  {ch['chat']:24s} {'✓ ready' if can else '✗ bot is not an admin with Post Messages'}  "
               f"({chat['result'].get('title')}, bot @{me['result']['username']})")
 
@@ -1299,7 +1305,10 @@ def post_to(ch, items, live, hour=None):
     for it in items:
         path, cap, key = (it + (None,))[:3]
         cap = cap + (f"\n\n{ch['footer']}" if ch.get("footer") else "")
-        if not live or not token:
+        if live and not token:
+            print(f"  ✗ {ch['chat']}: no bot token — add the secret {ch['token_env']} in GitHub Settings → Secrets → Actions")
+            FAILURES.append(ch["chat"]); continue
+        if not live:
             print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}{' (silent)' if silent else ''}\n{cap}\n")
             continue
         with open(path, "rb") as f:
@@ -1308,6 +1317,8 @@ def post_to(ch, items, live, hour=None):
         print(f"  → {ch['chat']} {os.path.basename(path)}: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
         if j.get("ok") and key:
             remember(ch, key)
+        if not j.get("ok"):
+            FAILURES.append(ch["chat"])
         time.sleep(2)
 
 
@@ -1445,3 +1456,6 @@ if __name__ == "__main__":
         cmd_channels_check()
     if a[0] == "slot":                                        # python scrape.py slot [hour] [--live]
         cmd_slot(int(a[1]) if len(a) > 1 and a[1].isdigit() else None, live)
+    if FAILURES:
+        print(f"\n  ✗ FAILED for: {sorted(set(FAILURES))}")
+        sys.exit(1)
