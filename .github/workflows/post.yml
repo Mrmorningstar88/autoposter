@@ -10,10 +10,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "slot = run one slot now · test = post one entry chart · report = poll history"
+        description: "auto = post whatever slot is due now, once (used by backup timers) · slot = run the chosen slot now · test = post one entry chart · report = poll history"
         default: "slot"
         type: choice
-        options: [slot, test, report]
+        options: [slot, auto, test, report]
       hour:
         description: "BRT slot for slot mode"
         default: "9"
@@ -54,7 +54,7 @@ jobs:
       - name: Pick slot (skip if this slot was already posted)
         id: slot
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" != "auto" ]; then
             echo "hour=${{ inputs.hour }}" >> "$GITHUB_OUTPUT"
           else
             H=$(python3 slots.py due state.json)
