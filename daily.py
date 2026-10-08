@@ -284,9 +284,11 @@ def close_poll(ch, ctx, late=False):
     if not op or not ctx["live"]:
         return None
     j = S.tg(os.getenv(ch["token_env"]), "stopPoll", data={"chat_id": ch["chat"], "message_id": op["message_id"]})
-    poll = j.get("result") if j.get("ok") else op.get("last")      # stopped by hand: use the last poll update the bot saw
-    if not poll:
-        desc = str(j.get("description", "")).lower()
+    desc = str(j.get("description", "")).lower()
+    last = op.get("last") or {}
+    by_hand = last.get("is_closed") or "already been closed" in desc     # stopped in the app: use the last poll update
+    poll = j.get("result") if j.get("ok") else (last if by_hand and last.get("options") else None)
+    if not poll:                                                           # temporary error: keep it open, retry next run
         print(f"  ! could not close poll {op['message_id']}: {j.get('description')}")
         if any(x in desc for x in ("not found", "can't be stopped", "already")) or time.time() - op["ts"] > 3 * 86400:
             d.pop("open_poll", None)
@@ -514,49 +516,54 @@ def pull_updates(ch, ctx):
     d, token = ctx["d"], os.getenv(ch["token_env"])
     if not token:
         return
-    j = S.tg(token, "getUpdates", data={"offset": d.get("offset", 0), "timeout": 0,
-                                         "allowed_updates": json.dumps(["channel_post", "message", "my_chat_member", "poll"])})
-    if not j.get("ok"):
-        print(f"  ! getUpdates: {j.get('description')}"); return
     want = str(ch.get("signal_source") or "AFX").lower()
     targets = {str(c["chat"]).lstrip("@").lower() for c in S.load_channels()}
-    for u in j["result"]:
-        if ctx["live"]:
-            d["offset"] = u["update_id"] + 1
-        pl = u.get("poll")
-        op = d.get("open_poll")
-        if pl and op and pl.get("id") == op.get("poll_id"):
-            op["last"] = pl
-            continue
-        m = u.get("message")
-        if m and m.get("chat", {}).get("type") == "private":
-            who = str(m["chat"].get("username", "")).lower()
-            print(f"  · private message from @{who} — chat id {m['chat']['id']}")
-            if who and who == str(ch.get("dm", "")).lstrip("@").lower() and ctx["live"]:
-                if d.get("owner_id") != m["chat"]["id"]:
-                    S.tg(token, "sendMessage", data={"chat_id": m["chat"]["id"], "text":
-                         f"✅ Conectado ao {ch['chat']}. Você vai receber aqui os relatórios das enquetes e qualquer alerta do autoposter."})
-                d["owner_id"] = m["chat"]["id"]
-                print("    → saved as the owner: poll reports and alerts go here")
-            continue
-        cm = u.get("my_chat_member")
-        if cm:
-            print(f"  · bot is now '{cm['new_chat_member']['status']}' in {cm['chat'].get('title')} (id {cm['chat']['id']})")
-            continue
-        post = u.get("channel_post")
-        if not post:
-            continue
-        chat = post["chat"]
-        if str(chat.get("username", "")).lower() in targets:
-            continue
-        if want not in (str(chat["id"]), str(chat.get("title", "")).lower()) and want not in str(chat.get("title", "")).lower():
-            print(f"  · ignored post from {chat.get('title')} (id {chat['id']}): not the signal source '{want}'")
-            continue
-        d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
-        sig = parse_signal(post.get("text") or post.get("caption") or "")
-        print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
-        if sig:
-            d.setdefault("src", []).append(dict(sig, ts=post["date"], id=post["message_id"], posted=False))
+    off = d.get("offset", 0)
+    for _ in range(20):                                   # page through backlogs (busy polls), at most 2000 updates
+        j = S.tg(token, "getUpdates", data={"offset": off, "limit": 100, "timeout": 0,
+                                             "allowed_updates": json.dumps(["channel_post", "message", "my_chat_member", "poll"])})
+        if not j.get("ok"):
+            print(f"  ! getUpdates: {j.get('description')}"); break
+        for u in j["result"]:
+            off = u["update_id"] + 1
+            if ctx["live"]:
+                d["offset"] = off
+            pl = u.get("poll")
+            op = d.get("open_poll")
+            if pl and op and pl.get("id") == op.get("poll_id"):
+                op["last"] = pl
+                continue
+            m = u.get("message")
+            if m and m.get("chat", {}).get("type") == "private":
+                who = str(m["chat"].get("username", "")).lower()
+                print(f"  · private message from @{who} — chat id {m['chat']['id']}")
+                if who and who == str(ch.get("dm", "")).lstrip("@").lower() and ctx["live"]:
+                    if d.get("owner_id") != m["chat"]["id"]:
+                        S.tg(token, "sendMessage", data={"chat_id": m["chat"]["id"], "text":
+                             f"✅ Conectado ao {ch['chat']}. Você vai receber aqui os relatórios das enquetes e qualquer alerta do autoposter."})
+                    d["owner_id"] = m["chat"]["id"]
+                    print("    → saved as the owner: poll reports and alerts go here")
+                continue
+            cm = u.get("my_chat_member")
+            if cm:
+                print(f"  · bot is now '{cm['new_chat_member']['status']}' in {cm['chat'].get('title')} (id {cm['chat']['id']})")
+                continue
+            post = u.get("channel_post")
+            if not post:
+                continue
+            chat = post["chat"]
+            if str(chat.get("username", "")).lower() in targets:
+                continue
+            if want not in (str(chat["id"]), str(chat.get("title", "")).lower()) and want not in str(chat.get("title", "")).lower():
+                print(f"  · ignored post from {chat.get('title')} (id {chat['id']}): not the signal source '{want}'")
+                continue
+            d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
+            sig = parse_signal(post.get("text") or post.get("caption") or "")
+            print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
+            if sig:
+                d.setdefault("src", []).append(dict(sig, ts=post["date"], id=post["message_id"], posted=False))
+        if len(j["result"]) < 100 or not ctx["live"]:   # a dry run never pages: a higher offset deletes updates
+            break
     d["src"] = [s for s in d.get("src", []) if time.time() - s["ts"] < 3 * 86400]
 
 
