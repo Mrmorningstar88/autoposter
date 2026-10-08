@@ -9,11 +9,15 @@
       "GBPUSD"
     ],
     "slots": [
-      7,
       9,
-      12,
-      19
+      11,
+      13,
+      15,
+      19,
+      21
     ],
+    "dm": "",
+    "signal_source": "AFX",
     "footer": "",
     "quiet_hours": [],
     "token_env": "TG_BOT_TOKEN",

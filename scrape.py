@@ -575,14 +575,17 @@ def cmd_charts():
 # ================================================================= 5b. ANALYST CHARTS (technical analysis engine + pro chart)
 # Instruments: (display name, yfinance ticker, pip size, decimals). Gold uses COMEX futures shifted to spot by GOLD_BASIS.
 TA_MARKETS = [("XAUUSD", "GC=F", 0.1, 2), ("EURUSD", "EURUSD=X", 0.0001, 5), ("GBPUSD", "GBPUSD=X", 0.0001, 5)]
+# extra instruments a forwarded signal may use (not part of the own-analysis rotation)
+EXTRA_MARKETS = [("USDJPY", "USDJPY=X", 0.01, 3), ("XAGUSD", "SI=F", 0.01, 3), ("BTCUSD", "BTC-USD", 1.0, 0),
+                 ("US30", "YM=F", 1.0, 0), ("NAS100", "NQ=F", 1.0, 0)]
 TA_JOBS = [("XAUUSD", "1h", 70), ("XAUUSD", "15m", 70), ("EURUSD", "1h", 70), ("GBPUSD", "1h", 70)]
 CHART_STYLE = os.getenv("CHART_STYLE", "clean")      # "clean" = simple entry chart (default) · "pro" = full structure chart
 
 
-def render_entry_chart(name, tf, bars, basis=0.0):
-    if CHART_STYLE == "pro":
+def render_entry_chart(name, tf, bars, basis=0.0, plan=None):
+    if CHART_STYLE == "pro" and plan is None:
         return chart_analyst(name, tf, bars * 2, basis)
-    return chart_clean(name, tf, bars, basis)
+    return chart_clean(name, tf, bars, basis, plan)
 TV = dict(up="#26A69A", down="#EF5350", zone_d="#26A69A", zone_s="#EF5350", level="#7D8BA6", ema="#5B8CFF")
 
 
@@ -1018,7 +1021,8 @@ def cmd_ta(rows=None):
 # One idea per chart: candles + the entry zone + the trade box + four numbers. Square, phone-first, big type.
 CLEAN = dict(bg="#0E1525", panel="#0E1525", grid="#1A2438", text="#F2F5FA", muted="#8C98AE",
              buy="#22C38E", sell="#F0506E", gold="#F2B33D")
-NAMES = {"XAUUSD": "GOLD", "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD"}
+NAMES = {"XAUUSD": "GOLD", "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "XAGUSD": "PRATA",
+         "BTCUSD": "BITCOIN", "US30": "DOW JONES", "NAS100": "NASDAQ"}
 LANG = os.getenv("LANG_CODE", "en")                  # set per channel via channels.json "lang": "en" | "pt"
 PT_MONTHS = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 TXT = {
@@ -1071,20 +1075,32 @@ def _pill(ax, x, y, text, fc, tc, size=12, ha="left", transform=None):
 
 def plain_reason(res, tf):
     plan = res["plan"]
+    if plan.get("reason"):
+        return plan["reason"]
     up = plan["side"] == "BUY"
     where = T("where_now") if plan["at_market"] else T("where_buy") if up else T("where_sell")
     return T("reason", trend=T("up") if res["trend"] == 1 else T("down"), tf=tf.upper(), where=where)
 
 
-def chart_clean(name, tf, bars, basis=0.0):
+def with_rr(plan, last, A):
+    """Complete an outside plan (side, entry, sl, tp1, tp2) with the fields the chart needs."""
+    risk = abs(plan["entry"] - plan["sl"]) or 1e-9
+    return dict(plan, rr1=abs(plan["tp1"] - plan["entry"]) / risk, rr2=abs(plan["tp2"] - plan["entry"]) / risk,
+                zone=None, at_market=plan.get("at_market", abs(plan["entry"] - last) < 0.25 * A))
+
+
+def chart_clean(name, tf, bars, basis=0.0, plan=None):
+    """plan: optional outside trade (e.g. a forwarded signal) drawn instead of the engine's own setup."""
     plt = _mpl()
     import matplotlib.patches as mp
-    tk, pip, _ = next((t, p, d) for n, t, p, d in TA_MARKETS if n == name)
-    dec = 1 if name == "XAUUSD" else 5
+    tk, pip, d = next((t, p, d) for n, t, p, d in TA_MARKETS + EXTRA_MARKETS if n == name)
+    dec = 1 if name == "XAUUSD" else d
     full = load_tf(tk, tf) - basis
     htf = load_tf(tk, "4h") - basis
     htf_trend, _ = structure(htf, *swings(htf))
     res = analyse(full, htf_trend)
+    if plan:
+        res["plan"] = with_rr(plan, res["last"], res["atr"])
     plan = res["plan"]
     df = full.iloc[-bars:]
     n = len(df)
@@ -1158,7 +1174,7 @@ def chart_clean(name, tf, bars, basis=0.0):
     loc = __import__("matplotlib").ticker.MaxNLocator(5)
     ticks = [t for t in loc.tick_values(lo - pad, hi + pad) if lo - pad < t < hi + pad and abs(t - last) > (hi - lo) * 0.07]
     ax.set_yticks(ticks)
-    ax.set_yticklabels([fmt_p(t, 0 if dec == 1 else 4) for t in ticks])
+    ax.set_yticklabels([fmt_p(t, 0 if dec <= 1 else dec - 1) for t in ticks])
     _pill(ax, -0.012, last, f"{fmt_p(last, dec)}", CLEAN["gold"], CLEAN["bg"], 10, ha="right", transform=ax.get_yaxis_transform())
     ax.text(n + 0.8, last, T("NOW"), color=CLEAN["gold"], fontsize=9, fontweight="bold", va="bottom")
     ax.set_xticks([])

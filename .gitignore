@@ -1,0 +1,7 @@
+__pycache__/
+charts/
+state.json
+*.json.bak
+posts.json
+rows.json
+analytics.json
