@@ -439,6 +439,7 @@ def slot_overview(ch, ctx):
 
     def posted():
         d["last_focus"] = focus
+        d.setdefault("covered", {})[f"{datetime.now(TZ):%Y-%m-%d}:11"] = focus
         if voted:
             voted["reviewed"] = True
     intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({voted['counts'][focus]} votos). Aqui está a análise.\n\n" if voted else ""
@@ -619,7 +620,7 @@ def slot_signal(ch, ctx):
         if ch["markets"] is not None and s["name"] not in ch["markets"] and s["name"] not in [m for m, *_ in S.EXTRA_MARKETS]:
             continue
         item = signal_post(ch, ctx, s, source=True)
-        if item and any(x["key"] == item[2]["signal"]["key"] for x in d.get("signals", [])):
+        if item and seen_setup(d, s["name"], item[2]["signal"]):
             print(f"  · source signal {item[2]['signal']['key']} was already posted: skipped")
             if ctx["live"]:
                 s["posted"] = True
@@ -636,10 +637,47 @@ def slot_signal(ch, ctx):
     for name in sorted(ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"], key=lambda m: -pref.get(m, 0)):
         for tf in ("15m", "1h") if name == "XAUUSD" else ("1h",):
             p, c, res = S.render_entry_chart(name, tf, 70, ctx["basis"] if name == "XAUUSD" else 0.0)
-            if res["plan"] and not any(x["key"] == S.setup_key(name, res["plan"]) for x in d.get("signals", [])):
+            if res["plan"] and not seen_setup(d, name, res["plan"]):
                 return [finish_signal(ch, ctx, name, tf, res["plan"], p, c, "own")]
-    print("  no fresh signal, no result to show and no clean setup")
-    return []
+    # 4. never leave the slot empty: a market panorama of an asset not covered yet today
+    print("  no fresh signal, no result to show and no new setup: posting a market panorama")
+    return [panorama_item(ch, ctx)]
+
+
+def seen_setup(d, name, plan, hours=24):
+    """Rule 1: same instrument and side with an entry within 0.15% of a signal posted in the last day is a repeat."""
+    for x in d.get("signals", []):
+        if (x["name"] == name and x["side"] == plan["side"] and time.time() - x["ts"] < hours * 3600
+                and abs(x["entry"] - plan["entry"]) / plan["entry"] < 0.0015):
+            return True
+    return False
+
+
+PANORAMA_OPEN = ["📊 Sem entrada limpa neste momento. Paciência também é posição.",
+                 "📊 Nenhum setup novo agora, então segue o panorama.",
+                 "📊 Mercado sem gatilho claro no momento. Vale acompanhar este ativo."]
+
+
+def panorama_item(ch, ctx):
+    d = ctx["d"]
+    qs = quotes(list(A), ctx["basis"])
+    today = datetime.now(TZ).strftime("%Y-%m-%d")
+    covered = {v for k, v in d.get("covered", {}).items() if k.startswith(today)} | {d.get("last_focus")}
+    cand = [k for k in TRADABLE if k in qs and k not in covered] or [k for k in TRADABLE if k in qs]
+    focus = max(cand, key=lambda k: abs(qs[k]["chg"]))
+    p, facts = overview_card(focus, qs, ctx["basis"])
+    cap = ai(f"Escreva um panorama curto de {A[focus]['label']} para agora: tendência, níveis principais e o que esperar "
+             f"nas próximas horas. Comece dizendo que não há entrada limpa neste momento.", facts, 750)
+    cap = cap or f"{pick(PANORAMA_OPEN)}\n\n" + template_overview(focus, facts)
+    h = hook(ch)
+    if h:
+        cap = cap.replace("\n\n⚠️", f"\n\n{h}\n\n⚠️", 1) if "\n\n⚠️" in cap else cap + f"\n\n{h}"
+
+    def posted():
+        d.setdefault("covered", {})[f"{today}:{ctx['hour']}"] = focus
+        for k in [k for k in d["covered"] if k[:10] < (datetime.now(TZ) - timedelta(days=3)).strftime("%Y-%m-%d")]:
+            del d["covered"][k]
+    return (p, cap, {"after": posted})
 
 
 def signal_post(ch, ctx, s, source):
