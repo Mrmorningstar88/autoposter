@@ -96,6 +96,12 @@ def fmt(x, dec):
     return f"{x:,.{dec}f}".replace(",", " ") if dec == 0 else f"{x:.{dec}f}"
 
 
+def pick(options):
+    """Same choice all day, a different one the next day (no repeats on consecutive days)."""
+    day = datetime.now(TZ).toordinal()
+    return options[(day * 7 + len(options[0])) % len(options)]
+
+
 # ---------------------------------------------------------------- AI copywriting (optional)
 VOICE = ("Você escreve posts de Telegram para Gabriel Santos, trader brasileiro de forex e ouro. "
          "Português do Brasil, tom respeitoso, confiante e direto, frases curtas, no máximo 3 emojis. "
@@ -133,6 +139,25 @@ def send_photo(ch, path, cap, live, hour):
         j = S.tg(os.getenv(ch["token_env"]), "sendPhoto", files={"photo": f},
                  data={"chat_id": ch["chat"], "caption": cap[:1024], "disable_notification": hour in (ch.get("quiet_hours") or [])})
     print(f"  → {ch['chat']} {os.path.basename(path)}: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
+    if not j.get("ok"):
+        S.FAILURES.append(ch["chat"])
+    return j
+
+
+def send_album(ch, paths, cap, live, hour):
+    cap = cap + (f"\n\n{ch['footer']}" if ch.get("footer") else "")
+    if not live:
+        print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap}\n")
+        return {"ok": True}
+    files = {f"f{i}": open(p, "rb") for i, p in enumerate(paths[:10])}
+    media = [dict(type="photo", media=f"attach://f{i}", **({"caption": cap[:1024]} if i == 0 else {})) for i in range(len(files))]
+    try:
+        j = S.tg(os.getenv(ch["token_env"]), "sendMediaGroup", files=files,
+                 data={"chat_id": ch["chat"], "media": json.dumps(media), "disable_notification": hour in (ch.get("quiet_hours") or [])})
+    finally:
+        for f in files.values():
+            f.close()
+    print(f"  → {ch['chat']} album of {len(files)}: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
     if not j.get("ok"):
         S.FAILURES.append(ch["chat"])
     return j
@@ -212,12 +237,17 @@ def facts_text(qs):
 
 
 # ================================================================= 09:00 morning
+MORNING = ["☀️ Bom dia, traders!\n\nDestaques desta manhã:\n{m}\n\nPlano definido, risco controlado. Bons trades! 💪",
+           "☀️ Bom dia!\n\nAssim os mercados começam o dia:\n{m}\n\nPaciência para esperar a entrada certa vale mais que pressa. 🎯",
+           "🌅 Bom dia, pessoal!\n\nO que se moveu desde ontem:\n{m}\n\nOpere o plano, não a emoção. Bom dia de trades!",
+           "☕ Bom dia, traders!\n\nPanorama da manhã:\n{m}\n\nStop sempre definido antes da entrada. Bora pro dia! 💪",
+           "☀️ Bom dia!\n\nOs números de abertura:\n{m}\n\nMenos operações, mais qualidade. Excelente dia a todos."]
 def slot_morning(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
     p = market_card(qs, "Bom dia, traders", "morning.png")
     cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
              "e uma frase sobre disciplina ou gestão de risco para o dia.", facts_text(qs), 700)
-    cap = cap or f"☀️ Bom dia, traders!\n\nDestaques desta manhã:\n{movers_text(qs)}\n\nPlano definido, risco controlado. Bons trades! 💪"
+    cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
 
 
@@ -266,28 +296,17 @@ def poll_options(d):
     return opts[:4]
 
 
+POLL_ICON = {"XAUUSD": "🥇", "EURUSD": "💶", "GBPUSD": "💷", "BTCUSD": "🪙", "WTI": "🛢", "USDJPY": "💴", "XAGUSD": "🥈"}
+POLL_Q = ["📊 Qual ativo você quer que eu analise amanhã às 11h?",
+          "🗳 Você escolhe: qual ativo ganha análise completa amanhã às 11h?",
+          "📈 Amanhã às 11h eu analiso o mais votado. Qual vai ser?",
+          "🔎 Qual gráfico você quer ver destrinchado amanhã às 11h?"]
+
+
 def slot_poll(ch, ctx):
     d = ctx["d"]
     close_poll(ch, ctx)
-    keys = poll_options(d)
-    q = "Qual ativo você quer que eu analise amanhã?"
-    fig = fig_base("Enquete do dia", f"{WEEKDAYS[datetime.now(TZ).weekday()]}, {S.stamp()} {S.TZ_LABEL}")
-    fig.text(0.06, 0.78, "Qual ativo você quer que", fontsize=26, color=C["text"], fontweight="bold", va="top")
-    fig.text(0.06, 0.715, "eu analise amanhã?", fontsize=26, color=C["gold"], fontweight="bold", va="top")
-    import matplotlib.patches as mp
-    for i, k in enumerate(keys):
-        y = 0.53 - i * 0.105
-        fig.patches.append(mp.FancyBboxPatch((0.06, y), 0.88, 0.08, transform=fig.transFigure,
-                                             boxstyle="round,pad=0,rounding_size=0.015", fc=TILE, ec="none"))
-        fig.text(0.095, y + 0.04, chr(65 + i), fontsize=17, color=C["bg"], fontweight="bold", va="center", ha="center",
-                 bbox=dict(boxstyle="circle,pad=0.3", fc=C["gold"], ec="none"))
-        fig.text(0.14, y + 0.04, A[k]["label"], fontsize=19, color=C["text"], fontweight="bold", va="center")
-    fig.text(0.06, 0.125, "Vote na enquete logo abaixo.\nO mais votado ganha análise completa amanhã às 11h.",
-             fontsize=12, color=C["text"], va="top", linespacing=1.5)
-    footer(fig)
-    p = S.save_clean(fig, "poll.png")
-    cap = "🗳 Enquete do dia!\n\nVocê escolhe o ativo da análise de amanhã às 11h. Vote abaixo 👇"
-    return [(p, cap, {"poll": dict(question=q, keys=keys)})]
+    return [{"poll": dict(question=pick(POLL_Q), keys=poll_options(d))}]
 
 
 def send_poll(ch, spec, ctx):
@@ -296,7 +315,8 @@ def send_poll(ch, spec, ctx):
         return
     j = S.tg(os.getenv(ch["token_env"]), "sendPoll",
              data={"chat_id": ch["chat"], "question": spec["question"], "is_anonymous": True,
-                   "options": json.dumps([{"text": A[k]["label"]} for k in spec["keys"]])})
+                   "options": json.dumps([{"text": f"{POLL_ICON.get(k, '')} {A[k]['label']}".strip()} for k in spec["keys"]]),
+                   "disable_notification": ctx["hour"] in (ch.get("quiet_hours") or [])})
     print(f"  → {ch['chat']} poll: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
     if j.get("ok"):
         ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time())
@@ -622,7 +642,19 @@ def result_card(ch, sig, status, basis):
     return (p, cap)
 
 
-# ================================================================= 21:00 news roundup
+# ================================================================= 21:00 news roundup (carousel)
+SOURCES = {"br.investing.com": "Investing.com", "www.infomoney.com.br": "InfoMoney"}
+TOPICS = [  # tag on the slide, keywords, asset shown as "impact"
+    ("DÓLAR", r"D[ÓO]LAR|C[ÂA]MBIO", "USDBRL"), ("OURO", r"\bOURO\b", "XAUUSD"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
+    ("BOLSA", r"IBOVESPA|BOLSA|B3\b", "IBOV"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"), ("EURO", r"\bEURO\b|BCE\b", "EURUSD"),
+    ("LIBRA", r"LIBRA|BOE\b|REINO UNIDO", "GBPUSD"), ("IENE", r"IENE|JAP[ÃA]O|BOJ\b", "USDJPY"),
+    ("EUA", r"WALL STREET|S&P|NASDAQ|\bFED\b|TREASUR|PAYROLL|EUA\b", "SPX"), ("JUROS", r"JUROS|COPOM|SELIC|INFLA|IPCA|PIB\b", None)]
+TRUSTED = r"FOLHA|G1|CNN|VALOR|ESTAD|INFOMONEY|EXAME|REUTERS|BLOOMBERG|MONEY TIMES|INVESTING|UOL|PODER360|O GLOBO|INVEST NEWS|BTG|XP|E-INVESTIDOR|SEU DINHEIRO|BRAZIL JOURNAL"
+OFF_TOPIC = r"FUTSAL|FUTEBOL|MEDALHA|CAMPEONATO|OL[ÍI]MPI|COPA DO|JOGOS|PARTIDA|PREMIA[ÇC][ÃA]O|BODAS|JOIA"
+TAG_COL = {"DÓLAR": "#22C38E", "OURO": "#F2B33D", "PETRÓLEO": "#F08A4B", "BOLSA": "#5B8CFF", "CRIPTO": "#F7931A",
+           "EURO": "#5B8CFF", "LIBRA": "#B07CF0", "IENE": "#F0506E", "EUA": "#5BC0EB", "JUROS": "#E6EAF2"}
+
+
 def news(hours=14):
     items, seen = [], set()
     cut = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -631,8 +663,13 @@ def news(hours=14):
             root = ET.fromstring(requests.get(url, headers=S.UA, timeout=30).content)
         except Exception as e:
             print(f"  ! feed {url[:50]}: {e}"); continue
+        host = url.split("/")[2]
         for it in root.iter("item"):
-            title = re.sub(r"\s+-\s+[^-]+$", "", it.findtext("title") or "").strip() if "news.google" in url else (it.findtext("title") or "").strip()
+            title, src = (it.findtext("title") or "").strip(), SOURCES.get(host, host)
+            if "news.google" in host and " - " in title:
+                title, src = title.rsplit(" - ", 1)
+                if not re.search(TRUSTED, src.upper()):
+                    continue
             raw = it.findtext("pubDate") or ""
             try:
                 dt = parsedate_to_datetime(raw)
@@ -642,29 +679,129 @@ def news(hours=14):
                 except Exception:
                     continue
             key = re.sub(r"\W+", "", title.lower())[:60]
+            if re.search(OFF_TOPIC, title.upper()):
+                continue
             if dt >= cut and title and key not in seen:
-                seen.add(key); items.append(dict(title=title, dt=dt, src=url.split("/")[2]))
+                seen.add(key)
+                tag = next(((t, a) for t, rx, a in TOPICS if re.search(rx, title.upper())), None)
+                items.append(dict(title=title, dt=dt, src=src.strip(), tag=tag[0] if tag else None, asset=tag[1] if tag else None))
     return sorted(items, key=lambda x: x["dt"], reverse=True)
 
 
-MARKET_WORDS = r"(D[ÓO]LAR|OURO|PETR[ÓO]LEO|IBOVESPA|BOLSA|JUROS|FED|COPOM|INFLA|EURO|LIBRA|IENE|BITCOIN|CRIPTO|PAYROLL|PIB|BC\b|TREASUR|S&P|NASDAQ|WALL)"
+def pick_news(items, n=5):
+    """Most recent market headline per topic first, so the carousel covers different subjects."""
+    out, used = [], set()
+    for it in items:
+        if it["tag"] and it["tag"] not in used:
+            out.append(it); used.add(it["tag"])
+    out += [i for i in items if i["tag"] and i not in out]
+    return out[:n]
+
+
+def wrap(text, width):
+    import textwrap
+    return textwrap.wrap(text, width) or [""]
+
+
+def news_cover(heads, qs):
+    now = datetime.now(TZ)
+    fig = fig_base("Resumo do dia", f"{WEEKDAYS[now.weekday()]}, {S.stamp()} {S.TZ_LABEL}  ·  o que mexeu com os mercados")
+    import matplotlib.patches as mp
+    y = 0.80
+    for i, h in enumerate(heads):
+        lines = wrap(h["title"], 44)[:2]
+        if len(wrap(h["title"], 44)) > 2:
+            lines[-1] = lines[-1].rstrip(".,;: ") + "…"
+        hgt = 0.05 + 0.032 * len(lines)
+        fig.patches.append(mp.FancyBboxPatch((0.06, y - hgt), 0.88, hgt, transform=fig.transFigure,
+                                             boxstyle="round,pad=0,rounding_size=0.012", fc=TILE, ec="none"))
+        fig.text(0.085, y - 0.024, f"{i + 1:02d}", fontsize=17, color=C["gold"], fontweight="bold", va="top")
+        fig.text(0.16, y - 0.022, h["tag"], fontsize=9.5, color=TAG_COL.get(h["tag"], C["muted"]), fontweight="bold", va="top")
+        fig.text(0.16, y - 0.05, "\n".join(lines), fontsize=12.5, color=C["text"], va="top", linespacing=1.45)
+        y -= hgt + 0.018
+    fig.text(0.94, 0.115, "deslize para ver cada notícia  →", fontsize=12, color=C["gold"], fontweight="bold", ha="right", va="top")
+    footer(fig)
+    return S.save_clean(fig, "news_0.png")
+
+
+def news_slide(i, n, h, qs, blurb=None):
+    fig = fig_base("", "")
+    col = TAG_COL.get(h["tag"], C["muted"])
+    fig.text(0.06, 0.94, f"NOTÍCIA {i:02d}/{n:02d}", fontsize=11, color=C["muted"], fontweight="bold", va="top")
+    fig.text(0.94, 0.945, f"  {h['tag']}  ", fontsize=13, color=C["bg"], fontweight="bold", ha="right", va="top",
+             bbox=dict(boxstyle="round,pad=0.4,rounding_size=0.35", fc=col, ec="none"))
+    lines = wrap(h["title"], 26)
+    size = 30 if len(lines) <= 5 else 25
+    lines = wrap(h["title"], 26 if size == 30 else 31)[:7]
+    fig.text(0.06, 0.84, "\n".join(lines), fontsize=size, color=C["text"], fontweight="bold", va="top", linespacing=1.3)
+    y = 0.84 - len(lines) * size * 1.3 / 72 / 8 - 0.04
+    fig.add_artist(__import__("matplotlib").lines.Line2D([0.06, 0.16], [y, y], color=col, lw=4, transform=fig.transFigure))
+    if blurb:
+        fig.text(0.06, y - 0.03, "\n".join(wrap(blurb, 52)[:4]), fontsize=14, color=C["muted"], va="top", linespacing=1.5)
+    if blurb:
+        y -= 0.03 + 0.033 * len(wrap(blurb, 52)[:4])
+    if h["asset"] and h["asset"] in qs:
+        reaction(fig, qs[h["asset"]], top=min(y - 0.08, 0.62))
+    loc = h["dt"].astimezone(TZ)
+    footer(fig, f"Fonte: {h['src']} · {loc:%H:%M} {S.TZ_LABEL}")
+    return S.save_clean(fig, f"news_{i}.png")
+
+
+def reaction(fig, q, top):
+    """Market panel under a headline: asset, price, day change and a 48h line chart filling the free space."""
+    import matplotlib.patches as mp
+    bottom = 0.11
+    fig.text(0.06, top + 0.035, "COMO O MERCADO REAGIU", fontsize=10, color=C["muted"], fontweight="bold", va="top")
+    fig.patches.append(mp.FancyBboxPatch((0.06, bottom), 0.88, top - bottom, transform=fig.transFigure,
+                                         boxstyle="round,pad=0,rounding_size=0.012", fc=TILE, ec="none"))
+    up = q["chg"] >= 0
+    col = C["buy"] if up else C["sell"]
+    fig.text(0.085, top - 0.03, q["label"].upper(), fontsize=11, color=C["muted"], fontweight="bold", va="top")
+    fig.text(0.085, top - 0.065, fmt(q["price"], q["dec"]), fontsize=24, color=C["text"], fontweight="bold", va="top")
+    fig.text(0.915, top - 0.03, f" {'▲' if up else '▼'} {pct(q['chg'])} hoje ", fontsize=12, color=C["bg"], fontweight="bold",
+             ha="right", va="top", bbox=dict(boxstyle="round,pad=0.35,rounding_size=0.3", fc=col, ec="none"))
+    h = top - bottom - 0.16
+    if h > 0.06 and len(q["spark"]) > 3:
+        ax = fig.add_axes([0.085, bottom + 0.035, 0.83, h], zorder=3); ax.axis("off")
+        s_ = q["spark"]
+        ax.plot(range(len(s_)), s_, color=col, lw=2.2)
+        ax.fill_between(range(len(s_)), s_, min(s_), color=col, alpha=0.14, lw=0)
+        ax.set_xlim(0, len(s_) - 1)
+        fig.text(0.915, bottom + 0.02, "últimas 48h", fontsize=9, color=C["muted"], ha="right", va="bottom")
+
+
+NEWS_OPEN = ["🌙 Resumo do dia", "🗞 O dia nos mercados", "🌙 Fechamento do dia", "🗞 Resumo da noite"]
+NEWS_CLOSE = ["Boa noite e até amanhã.", "Bom descanso e até amanhã às 9h.", "Boa noite a todos. Amanhã tem mais.",
+              "Obrigado por acompanhar. Boa noite."]
 
 
 def slot_news(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
-    p = market_card(qs, "Fechamento do dia", "close.png")
-    items = news()
-    heads = [i for i in items if re.search(MARKET_WORDS, i["title"].upper())] or items
+    heads = pick_news(news())
+    if not heads:
+        p = market_card(qs, "Fechamento do dia", "close.png")
+        return [(p, f"{pick(NEWS_OPEN)}\n\nNos mercados:\n{movers_text(qs, 4)}\n\n{pick(NEWS_CLOSE)}")]
+    blurbs = {}
+    raw = ai("Para cada manchete numerada, escreva UMA frase curta (até 140 caracteres) explicando por que ela importa para o "
+             "investidor, sem acrescentar fatos que não estejam na manchete. Responda no formato 'N: frase', uma por linha.",
+             "\n".join(f"{i + 1}: {h['title']}" for i, h in enumerate(heads)), 900)
+    for line in (raw or "").splitlines():
+        m = re.match(r"\s*(\d+)\s*[:.)-]\s*(.+)", line)
+        if m:
+            blurbs[int(m.group(1))] = m.group(2).strip()
+    paths = [news_cover(heads, qs)] + [news_slide(i + 1, len(heads), h, qs, blurbs.get(i + 1)) for i, h in enumerate(heads)]
+    paths.append(market_card(qs, "Fechamento do dia", "news_close.png"))
     cap = ai("Escreva o resumo das notícias do dia para o canal, em tom respeitoso e sóbrio: uma linha de abertura, 4 ou 5 tópicos "
-             "curtos (um por linha, começando com •) com o que mais importou para dólar, ouro, juros e bolsas, e uma linha final "
-             "desejando boa noite. Use só as manchetes e números fornecidos.",
-             "Mercados no dia:\n" + facts_text(qs) + "\n\nManchetes:\n" + "\n".join(f"- {h['title']}" for h in heads[:25]), 950)
+             "curtos (um por linha, começando com •) com o que mais importou, e uma linha final desejando boa noite. "
+             "Use só as manchetes e números fornecidos.",
+             "Mercados no dia:\n" + facts_text(qs) + "\n\nManchetes:\n" + "\n".join(f"- {h['title']}" for h in heads), 950)
     if not cap:
-        bullets = "\n".join(f"• {h['title']}" for h in heads[:5])
-        cap = f"🌙 Resumo do dia\n\n{bullets}\n\nNos mercados:\n{movers_text(qs, 3)}\n\nBoa noite e até amanhã."
-        while len(cap) > 1000 and "\n• " in cap:
-            cap = cap[:cap.rfind("\n• ", 0, cap.find("\n\nNos mercados"))] + cap[cap.find("\n\nNos mercados"):]
-    return [(p, cap)]
+        bullets = "\n".join(f"• {h['title']}" for h in heads)
+        cap = f"{pick(NEWS_OPEN)}\n\n{bullets}\n\nNos mercados:\n{movers_text(qs, 3)}\n\n{pick(NEWS_CLOSE)}"
+        while len(cap) > 1000 and bullets.count("\n"):
+            bullets = bullets.rsplit("\n", 1)[0]
+            cap = f"{pick(NEWS_OPEN)}\n\n{bullets}\n\nNos mercados:\n{movers_text(qs, 3)}\n\n{pick(NEWS_CLOSE)}"
+    return [{"album": paths, "cap": cap}]
 
 
 # ================================================================= runner
@@ -691,6 +828,10 @@ def run(hour, live):
             import traceback; traceback.print_exc()
             print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"]); continue
         for it in items:
+            if isinstance(it, dict) and "poll" in it:
+                send_poll(ch, it["poll"], ctx); continue
+            if isinstance(it, dict) and "album" in it:
+                send_album(ch, it["album"], it["cap"], live, hour); continue
             path, cap, extra = (tuple(it) + ({},))[:3]
             j = send_photo(ch, path, cap, live, hour)
             if j.get("ok") and extra.get("poll"):

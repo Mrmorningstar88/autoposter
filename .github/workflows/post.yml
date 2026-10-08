@@ -28,6 +28,11 @@ on:
 
 concurrency: telegram-poster          # one run at a time: they share the saved state
 
+permissions:
+  contents: read
+  actions: write                      # keep-alive: stops GitHub pausing the schedule after 60 quiet days
+  issues: write                       # failure alerts arrive as a GitHub issue (GitHub emails it to you)
+
 jobs:
   post:
     runs-on: ubuntu-latest
@@ -88,3 +93,28 @@ jobs:
           name: charts
           path: charts/*.png
           retention-days: 7
+      - name: Keep the schedule alive
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/post.yml/enable" || true
+      - name: Alert on failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
+        run: |
+          URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          MSG="⚠️ Autoposter: o post das ${{ steps.slot.outputs.hour }}h falhou. Detalhes: $URL"
+          NUM=$(gh issue list -R "${{ github.repository }}" --state open --label autoposter-alert --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R "${{ github.repository }}" --body "$MSG"
+          else
+            gh label create autoposter-alert -R "${{ github.repository }}" --color D93F0B 2>/dev/null || true
+            gh issue create -R "${{ github.repository }}" --title "Autoposter: a scheduled post failed" --label autoposter-alert \
+              --body "$MSG"$'\n\n'"Close this issue once it is fixed; the next failure opens a new one."
+          fi
+          if [ -n "$OWNER_CHAT_ID" ]; then
+            curl -s "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" -d chat_id="$OWNER_CHAT_ID" --data-urlencode text="$MSG" >/dev/null
+          fi

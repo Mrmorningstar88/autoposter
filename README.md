@@ -7,10 +7,10 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 | 09:00 | Good-morning card with the main markets (gold, FX, dollar/real, bitcoin, oil, silver, S&P 500, Ibovespa) |
 | 11:00 | Overview of one asset (4H chart, trend, support/resistance) + 3 related markets. The asset is yesterday's poll winner; with no votes it is the biggest mover |
 | 13:00 | Trading signal from the source channel (only if it was posted in the last 90 min, during Brazilian daytime). If none: the result of an earlier signal. If none: our own chart setup. Every signal and result ends with the DM hook |
-| 15:00 | Poll card + Telegram poll "which asset should I analyse tomorrow?". It closes at the next 11:00 run; the result is sent to you and decides the 11:00 asset |
+| 15:00 | Native Telegram poll "which asset should I analyse tomorrow?". It closes at the next 11:00 run; the result is sent to you and decides the 11:00 asset |
 | 17:00 | Manual |
 | 19:00 | Same as 13:00 |
-| 21:00 | Market-close card + short news roundup |
+| 21:00 | News carousel (album): cover with the day's 5 stories, one slide per story with the market's reaction, market-close card; roundup text as caption |
 
 ## Setup
 
@@ -19,6 +19,10 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 3. **DM hook**: put your Telegram handle in `channels.json` → `"dm": "@yourhandle"`.
 4. **Poll reports to you** (optional): send any message to the bot, run any slot, find `private message from @you — chat id 123…` in the run log, and save that number as the secret `OWNER_CHAT_ID`. Reports also appear in each run's summary page, and **Actions → Run workflow → mode = report** shows the full poll history.
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.
+
+## When something breaks
+
+A failed run opens (or comments on) a GitHub issue labelled `autoposter-alert`, which GitHub emails to you, and sends a Telegram DM if `OWNER_CHAT_ID` is set. Scheduled runs also re-enable the workflow so GitHub never pauses it for inactivity.
 
 ## Test and control
 
