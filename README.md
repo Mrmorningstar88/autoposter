@@ -12,11 +12,13 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 | 19:00 | Same as 13:00 |
 | 21:00 | News carousel (album): cover with the day's 5 stories, one slide per story with the market's reaction, market-close card; roundup text as caption |
 
+See **RULES.md** for the owner's rule book (no repeats, no personal info, never stop, keep the schedule).
+
 ## Setup
 
 1. **Bot token**: repo **Settings → Secrets and variables → Actions → `TG_BOT_TOKEN`**. The bot must be an admin of @sanstostrades.
 2. **Signal source**: add the same bot as an admin of the source channel (AFX | Сигналы). `signal_source` in `channels.json` is matched against the source channel's title or id.
-3. **DM hook**: put your Telegram handle in `channels.json` → `"dm": "@yourhandle"`.
+3. **DM line**: the public handle for DM requests goes in `channels.json` → `"dm"` (empty = no DM line). Never a personal account.
 4. **Poll reports and alerts by Telegram**: open the bot in Telegram and press **Start** (as the `dm` handle). The next run learns your chat id automatically. Reports are also posted as comments on the "📊 Relatório de enquetes" issue.
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.
 

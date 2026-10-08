@@ -16,11 +16,12 @@
       19,
       21
     ],
-    "dm": "@thecr8or",
+    "dm": "",
     "signal_source": "AFX",
     "footer": "",
     "quiet_hours": [],
     "token_env": "TG_BOT_TOKEN",
-    "enabled": true
+    "enabled": true,
+    "owner_username": "thecr8or"
   }
 ]

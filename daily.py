@@ -14,7 +14,9 @@ Daily content plan for the channel (Brazil time, Mon–Fri). Built on the chart 
 
 Env: TG_BOT_TOKEN (per channel via token_env), OWNER_CHAT_ID (optional, poll reports by DM),
      ANTHROPIC_API_KEY (optional, AI copywriting; without it the posts use built-in templates).
-channels.json per channel: dm (handle for the DM hook), signal_source (id or title of the source channel).
+channels.json per channel: dm (public handle for the DM line in posts; empty = no DM line), owner_username (the owner's
+     private Telegram username, only used to recognise the owner's messages to the bot; never posted),
+     signal_source (id or title of the source channel).
 """
 import json, os, re, sys, time, random
 import xml.etree.ElementTree as ET
@@ -132,8 +134,38 @@ def ai(task, facts, max_chars):
 
 
 # ---------------------------------------------------------------- telegram
+_RECENT = {}
+
+
+def recent_texts(ch):
+    """Texts of the channel's latest public posts (read once per run)."""
+    handle = str(ch["chat"]).lstrip("@")
+    if handle not in _RECENT:
+        _RECENT[handle] = []
+        if str(ch["chat"]).startswith("@"):
+            try:
+                from bs4 import BeautifulSoup
+                html = requests.get(f"https://t.me/s/{handle}", headers=S.UA, timeout=30).text
+                for el in BeautifulSoup(html, "html.parser").select(".tgme_widget_message_text"):
+                    _RECENT[handle].append(re.sub(r"\s+", " ", el.get_text(" ")).strip())
+            except Exception as e:
+                print(f"  ! could not read recent posts: {e}")
+    return _RECENT[handle]
+
+
+def already_in_channel(ch, cap):
+    """True when the caption's opening (first 3 non-empty lines) already appears in a recent post."""
+    head = [re.sub(r"\s+", " ", l).strip() for l in cap.splitlines() if l.strip()][:3]
+    if len(" ".join(head)) < 25:
+        return False
+    return any(all(l in t for l in head) for t in recent_texts(ch))
+
+
 def send_photo(ch, path, cap, live, hour):
     cap = cap + (f"\n\n{ch['footer']}" if ch.get("footer") else "")
+    if already_in_channel(ch, cap):
+        print(f"  · {os.path.basename(path)}: same content is already in the channel, not posted again")
+        return {"ok": False, "duplicate": True}
     if not live:
         print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}\n{cap}\n")
         return {"ok": True, "result": {"message_id": 0}}
@@ -148,6 +180,9 @@ def send_photo(ch, path, cap, live, hour):
 
 def send_album(ch, paths, cap, live, hour):
     cap = cap + (f"\n\n{ch['footer']}" if ch.get("footer") else "")
+    if already_in_channel(ch, cap):
+        print("  · album: same content is already in the channel, not posted again")
+        return {"ok": False, "duplicate": True}
     if not live:
         print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap}\n")
         return {"ok": True}
@@ -539,7 +574,7 @@ def pull_updates(ch, ctx):
             if m and m.get("chat", {}).get("type") == "private":
                 who = str(m["chat"].get("username", "")).lower()
                 print(f"  · private message from @{who} — chat id {m['chat']['id']}")
-                if who and who == str(ch.get("dm", "")).lstrip("@").lower() and ctx["live"]:
+                if who and who == str(ch.get("owner_username", "")).lstrip("@").lower() and ctx["live"]:
                     if d.get("owner_id") != m["chat"]["id"]:
                         S.tg(token, "sendMessage", data={"chat_id": m["chat"]["id"], "text":
                              f"✅ Conectado ao {ch['chat']}. Você vai receber aqui os relatórios das enquetes e qualquer alerta do autoposter."})
@@ -584,6 +619,11 @@ def slot_signal(ch, ctx):
         if ch["markets"] is not None and s["name"] not in ch["markets"] and s["name"] not in [m for m, *_ in S.EXTRA_MARKETS]:
             continue
         item = signal_post(ch, ctx, s, source=True)
+        if item and any(x["key"] == item[2]["signal"]["key"] for x in d.get("signals", [])):
+            print(f"  · source signal {item[2]['signal']['key']} was already posted: skipped")
+            if ctx["live"]:
+                s["posted"] = True
+            continue
         if item:
             item[2]["after"] = lambda s=s: s.update(posted=True)
             return [item]
@@ -653,10 +693,27 @@ def outcome(sig, basis):
     return ("TP1" if tp1 else "open"), df
 
 
+def post_exists(ch, mid):
+    """Is channel message `mid` still published? (a deleted signal must not get a result post)"""
+    handle = str(ch["chat"]).lstrip("@")
+    if not mid or not str(ch["chat"]).startswith("@"):
+        return bool(mid)
+    try:
+        html = requests.get(f"https://t.me/s/{handle}?before={mid + 1}", headers=S.UA, timeout=30).text
+        return f'data-post="{handle}/{mid}"' in html
+    except Exception:
+        return True                                        # can't tell: don't block the post
+
+
 def followup_post(ch, ctx):
     d = ctx["d"]
     for sig in sorted(d.get("signals", []), key=lambda s: -s["ts"]):
         if sig["followed"] or time.time() - sig["ts"] < 2 * 3600 or time.time() - sig["ts"] > 3 * 86400:
+            continue
+        if not post_exists(ch, sig.get("msg_id")):
+            print(f"  · signal {sig['key']} is no longer in the channel: no result post")
+            if ctx["live"]:
+                sig["followed"] = True
             continue
         basis = ctx["basis"] if sig["name"] == "XAUUSD" else 0.0
         try:
@@ -778,8 +835,14 @@ def news(hours=14):
     return sorted(items, key=lambda x: x["dt"], reverse=True)
 
 
-def pick_news(items, n=5):
-    """Most recent market headline per topic first, so the carousel covers different subjects."""
+def news_key(title):
+    return re.sub(r"\W+", "", title.lower())[:60]
+
+
+def pick_news(items, n=5, seen=()):
+    """Most recent market headline per topic first, so the carousel covers different subjects.
+    Stories already used in an earlier carousel (seen) are left out."""
+    items = [i for i in items if news_key(i["title"]) not in seen]
     out, used = [], set()
     for it in items:
         if it["tag"] and it["tag"] not in used:
@@ -871,7 +934,8 @@ NEWS_CLOSE = ["Boa noite e até amanhã.", "Bom descanso e até amanhã às 9h."
 
 def slot_news(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
-    heads = pick_news(news())
+    seen = ctx["d"].setdefault("news_seen", {})
+    heads = pick_news(news(), seen=seen)
     if not heads:
         p = market_card(qs, "Fechamento do dia", "close.png")
         return [(p, f"{pick(NEWS_OPEN)}\n\nNos mercados:\n{movers_text(qs, 4)}\n\n{pick(NEWS_CLOSE)}")]
@@ -895,7 +959,12 @@ def slot_news(ch, ctx):
         while len(cap) > 1000 and bullets.count("\n"):
             bullets = bullets.rsplit("\n", 1)[0]
             cap = f"{pick(NEWS_OPEN)}\n\n{bullets}\n\nNos mercados:\n{movers_text(qs, 3)}\n\n{pick(NEWS_CLOSE)}"
-    return [{"album": paths, "cap": cap}]
+    def posted():
+        for h in heads:
+            seen[news_key(h["title"])] = time.time()
+        for k in [k for k, t in seen.items() if time.time() - t > 10 * 86400]:
+            del seen[k]
+    return [{"album": paths, "cap": cap, "after": posted}]
 
 
 # ================================================================= runner
@@ -927,13 +996,17 @@ def run(hour, live):
                     if isinstance(it, dict) and "poll" in it:
                         send_poll(ch, it["poll"], ctx); continue
                     if isinstance(it, dict) and "album" in it:
-                        send_album(ch, it["album"], it["cap"], live, hour); continue
+                        j = send_album(ch, it["album"], it["cap"], live, hour)
+                        if j.get("ok") and live and it.get("after"):
+                            it["after"]()
+                        continue
                     path, cap, extra = (tuple(it) + ({},))[:3]
                     j = send_photo(ch, path, cap, live, hour)
                     if j.get("ok") and live:
                         if extra.get("after"):
                             extra["after"]()
                         if extra.get("signal"):
+                            extra["signal"]["msg_id"] = j.get("result", {}).get("message_id")
                             cd.setdefault("signals", []).append(extra["signal"])
                             cd["signals"] = [x for x in cd["signals"] if time.time() - x["ts"] < 7 * 86400]
                     time.sleep(1)
@@ -948,6 +1021,35 @@ def run(hour, live):
     finally:
         if live:
             save(st)                                     # keep poll results, offsets and posted flags even after an error
+
+
+HOOK_START = ("📩", "💬", "🔒")
+
+
+def scrub(ids, live):
+    """Remove the DM line from published posts (message ids). Reads the caption from the channel's public page."""
+    for ch in S.load_channels():
+        handle = str(ch["chat"]).lstrip("@")
+        for mid in ids:
+            html = requests.get(f"https://t.me/s/{handle}?before={mid + 1}", headers=S.UA, timeout=30).text
+            from bs4 import BeautifulSoup
+            el = BeautifulSoup(html, "html.parser").select_one(
+                f'.tgme_widget_message[data-post="{handle}/{mid}"] .tgme_widget_message_text')
+            if not el:
+                print(f"  ! {handle}/{mid}: caption not found"); continue
+            for br in el.find_all("br"):
+                br.replace_with("\n")
+            lines = el.get_text().split("\n")
+            kept = [l for l in lines if not l.strip().startswith(HOOK_START)]
+            cap = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+            if kept == lines:
+                print(f"  {handle}/{mid}: no DM line, unchanged"); continue
+            if not live:
+                print(f"  [dry-run] {handle}/{mid} new caption:\n{cap}\n"); continue
+            j = S.tg(os.getenv(ch["token_env"]), "editMessageCaption", data={"chat_id": ch["chat"], "message_id": mid, "caption": cap})
+            print(f"  {handle}/{mid}: {'DM line removed' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
+            if not j.get("ok"):
+                S.FAILURES.append(ch["chat"])
 
 
 def report():
@@ -976,6 +1078,8 @@ if __name__ == "__main__":
         run(int(a[1]) if len(a) > 1 and a[1].isdigit() else datetime.now(TZ).hour, live)
     elif a and a[0] == "report":
         report()
+    elif a and a[0] == "scrub":                            # python daily.py scrub 19 20 [--live]
+        scrub([int(x) for x in a[1:] if x.isdigit()], live)
     else:
         print(__doc__)
     if S.FAILURES:

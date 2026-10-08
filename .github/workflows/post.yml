@@ -13,12 +13,15 @@ on:
         description: "auto = post whatever slot is due now, once (used by backup timers) · slot = run the chosen slot now · test = post one entry chart · report = poll history"
         default: "slot"
         type: choice
-        options: [slot, auto, test, report]
+        options: [slot, auto, test, report, scrub]
       hour:
         description: "BRT slot for slot mode"
         default: "9"
         type: choice
         options: ["9", "11", "13", "15", "19", "21"]
+      message_ids:
+        description: "scrub mode only: channel message numbers to remove the DM line from, e.g. 19 20"
+        default: ""
       dry_run:
         description: "Build the posts without sending them"
         default: false
@@ -44,13 +47,25 @@ jobs:
           path: state.json
           key: post-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: post-state-
-      - name: Stop if saved memory exists but could not be restored
+      - name: Retry restoring memory once
+        id: mem2
         if: steps.mem.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: post-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: post-state-
+      - name: Check memory (keep posting even if it could not be loaded)
+        id: guard
+        if: steps.mem.outputs.cache-matched-key == '' && steps.mem2.outputs.cache-matched-key == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           N=$(gh cache list -R "${{ github.repository }}" --key post-state- --json key -q 'length' 2>/dev/null || echo err)
-          [ "$N" = "0" ] || { echo "::error::saved state exists but restore failed ($N); not posting with empty memory"; exit 1; }
+          if [ "$N" != "0" ]; then
+            echo "degraded=1" >> "$GITHUB_OUTPUT"
+            echo "::warning::saved memory exists but could not be loaded ($N); posting anyway, the channel check prevents repeats, memory is not overwritten"
+          fi
       - name: Pick slot (skip if this slot was already posted)
         id: slot
         run: |
@@ -70,6 +85,7 @@ jobs:
         if: steps.slot.outputs.hour != ''
       - name: Check bot access
         if: steps.slot.outputs.hour != ''
+        continue-on-error: true            # diagnostic only: a hiccup here must never stop the post
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         run: python scrape.py channels
@@ -86,6 +102,7 @@ jobs:
           case "${{ github.event_name }}/${{ inputs.mode }}" in
             workflow_dispatch/test)   python scrape.py test $LIVE ;;
             workflow_dispatch/report) python daily.py report ;;
+            workflow_dispatch/scrub)  python daily.py scrub ${{ inputs.message_ids }} $LIVE ;;
             *)                        python daily.py run ${{ steps.slot.outputs.hour }} $LIVE ;;
           esac
       - name: Send poll report to the "Poll reports" issue
@@ -103,7 +120,7 @@ jobs:
           fi
           [ -n "$NUM" ] && gh issue comment "$NUM" -R "$R" --body-file report.md
       - name: Save memory
-        if: always() && steps.slot.outputs.hour != ''      # skipped attempts change nothing
+        if: always() && steps.slot.outputs.hour != '' && steps.guard.outputs.degraded != '1'   # skipped or degraded runs never overwrite it
         uses: actions/cache/save@v4
         with:
           path: state.json
