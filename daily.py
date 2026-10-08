@@ -163,14 +163,36 @@ def send_album(ch, paths, cap, live, hour):
     return j
 
 
-def notify_owner(ch, text, live):
-    owner = os.getenv("OWNER_CHAT_ID") or ch.get("owner_chat")
+REPORT_FILE = os.path.join(S.HERE, "report.md")      # picked up by the workflow and posted to the "Poll reports" issue
+
+
+def owner_chat(ch, ctx):
+    """Who gets the reports: OWNER_CHAT_ID, else channels.json owner_chat, else the channel's creator (found via the bot)."""
+    owner = os.getenv("OWNER_CHAT_ID") or ch.get("owner_chat") or ctx["d"].get("creator_id")
+    if owner or not ctx["live"]:
+        return owner
+    j = S.tg(os.getenv(ch["token_env"]), "getChatAdministrators", data={"chat_id": ch["chat"]})
+    creator = next((m["user"] for m in j.get("result", []) if m.get("status") == "creator"), None)
+    if creator:
+        ctx["d"]["creator_id"] = creator["id"]
+        return creator["id"]
+    return None
+
+
+def notify_owner(ch, text, ctx):
     print("  [report]\n" + text)
     if os.getenv("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("```\n" + text + "\n```\n")
-    if live and owner:
-        S.tg(os.getenv(ch["token_env"]), "sendMessage", data={"chat_id": owner, "text": text})
+    if not ctx["live"]:
+        return
+    with open(REPORT_FILE, "a") as f:
+        f.write(text + "\n\n")
+    owner = owner_chat(ch, ctx)
+    if owner:
+        j = S.tg(os.getenv(ch["token_env"]), "sendMessage", data={"chat_id": owner, "text": text})
+        if not j.get("ok"):
+            print(f"  ! report DM not delivered ({j.get('description')}): open the bot in Telegram and press Start once")
 
 
 def hook(ch, result=False):
@@ -277,13 +299,23 @@ def close_poll(ch, ctx):
         pref[k] *= 0.85
     for k, v in counts.items():
         pref[k] = pref.get(k, 0) + (v / total if total else 0)
-    hist = [p["total"] for p in d["polls"][-8:-1]]
-    avg = sum(hist) / len(hist) if hist else None
+    members = S.tg(os.getenv(ch["token_env"]), "getChatMemberCount", data={"chat_id": ch["chat"]}).get("result")
+    rec["members"] = members
+    prev = [p["total"] for p in d["polls"][-8:-1]]
+    avg = sum(prev) / len(prev) if prev else None
+    trend = " · ".join(str(p["total"]) for p in d["polls"][-6:])
+    top = sorted(pref.items(), key=lambda x: -x[1])[:3]
     lines = [f"📊 Enquete de {rec['date']} · {ch['chat']}",
-             f"Votantes: {total}" + (f" (média das anteriores: {avg:.1f})" if avg is not None else ""),
-             *[f"  {A[k]['label']}: {v}" for k, v in sorted(counts.items(), key=lambda x: -x[1])],
-             f"Ajuste: a análise das 11h será sobre {A[winner]['label']}." if winner else "Sem votos: 11h usa o ativo que mais se moveu."]
-    notify_owner(ch, "\n".join(lines), ctx["live"])
+             f"Votantes: {total}" + (f" de {members} inscritos ({total / members:.0%} engajados)" if members else "")
+             + (f" · média anterior {avg:.1f}" if avg is not None else ""),
+             *[f"  {POLL_ICON.get(k, '')} {A[k]['label']}: {v} ({v / total:.0%})" if total else f"  {A[k]['label']}: 0"
+               for k, v in sorted(counts.items(), key=lambda x: -x[1])],
+             f"Últimas enquetes (votantes): {trend}",
+             "Preferência acumulada: " + ", ".join(f"{A[k]['label']} {v:.2f}" for k, v in top),
+             f"Ajuste: a análise das 11h é sobre {A[winner]['label']}; as próximas enquetes e os setups priorizam "
+             + ", ".join(A[k]["label"] for k, _ in top[:2]) + "." if winner
+             else "Sem votos: a análise das 11h usa o ativo que mais se moveu."]
+    notify_owner(ch, "\n".join(lines), ctx)
     return rec
 
 
@@ -504,7 +536,8 @@ def slot_signal(ch, ctx):
     if item:
         return [item]
     # 3. own setup from the chart engine
-    for name in ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"]:
+    pref = d.get("pref", {})
+    for name in sorted(ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"], key=lambda m: -pref.get(m, 0)):
         for tf in ("15m", "1h") if name == "XAUUSD" else ("1h",):
             p, c, res = S.render_entry_chart(name, tf, 70, ctx["basis"] if name == "XAUUSD" else 0.0)
             if res["plan"] and not any(x["key"] == S.setup_key(name, res["plan"]) for x in d.get("signals", [])):

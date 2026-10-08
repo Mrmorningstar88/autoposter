@@ -80,6 +80,19 @@ jobs:
             workflow_dispatch/report) python daily.py report ;;
             *)                        python daily.py run ${{ steps.slot.outputs.hour }} $LIVE ;;
           esac
+      - name: Send poll report to the "Poll reports" issue
+        if: always() && hashFiles('report.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="${{ github.repository }}"
+          NUM=$(gh issue list -R "$R" --state open --label poll-report --json number -q '.[0].number' 2>/dev/null || true)
+          if [ -z "$NUM" ]; then
+            gh label create poll-report -R "$R" --color 1D76DB 2>/dev/null || true
+            NUM=$(gh issue create -R "$R" --title "📊 Relatório de enquetes" --label poll-report \
+              --body "Cada enquete encerrada aparece aqui como comentário (GitHub envia por e-mail)." | grep -o '[0-9]*$')
+          fi
+          gh issue comment "$NUM" -R "$R" --body-file report.md
       - name: Save memory
         if: always()
         uses: actions/cache/save@v4
