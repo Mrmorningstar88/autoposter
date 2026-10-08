@@ -484,7 +484,7 @@ def read_source(ch, ctx):
     if not token:
         return
     j = S.tg(token, "getUpdates", data={"offset": d.get("offset", 0), "timeout": 0,
-                                         "allowed_updates": json.dumps(["channel_post", "message"])})
+                                         "allowed_updates": json.dumps(["channel_post", "message", "my_chat_member"])})
     if not j.get("ok"):
         print(f"  ! getUpdates: {j.get('description')}"); return
     want = str(ch.get("signal_source") or "AFX").lower()
@@ -496,6 +496,10 @@ def read_source(ch, ctx):
         if m and m.get("chat", {}).get("type") == "private":   # helps the owner find OWNER_CHAT_ID
             print(f"  · private message from @{m['chat'].get('username')} — chat id {m['chat']['id']}")
             continue
+        cm = u.get("my_chat_member")
+        if cm:
+            print(f"  · bot is now '{cm['new_chat_member']['status']}' in {cm['chat'].get('title')} (id {cm['chat']['id']})")
+            continue
         post = u.get("channel_post")
         if not post:
             continue
@@ -503,7 +507,9 @@ def read_source(ch, ctx):
         if str(chat.get("username", "")).lower() in targets:
             continue
         if want not in (str(chat["id"]), str(chat.get("title", "")).lower()) and want not in str(chat.get("title", "")).lower():
+            print(f"  · ignored post from {chat.get('title')} (id {chat['id']}): not the signal source '{want}'")
             continue
+        d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
         sig = parse_signal(post.get("text") or post.get("caption") or "")
         print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
         if sig:
