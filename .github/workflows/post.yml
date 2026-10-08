@@ -1,0 +1,75 @@
+name: Post charts to Telegram
+
+on:
+  schedule:
+    # GitHub cron is UTC. Brazil (BRT) = UTC-3. Mon–Fri, Brazil peak times:
+    - cron: "30 10 * * 1-5"  # 07:30 BRT  morning peak, day plan
+    - cron: "45 12 * * 1-5"  # 09:45 BRT  US data / NY open
+    - cron: "30 15 * * 1-5"  # 12:30 BRT  lunch peak
+    - cron: "30 22 * * 1-5"  # 19:30 BRT  prime time
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "test = post one chart now · slot = run a schedule slot"
+        default: "test"
+        type: choice
+        options: [test, slot]
+      hour:
+        description: "BRT hour for slot mode (7, 9, 12, 19)"
+        default: "12"
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Restore memory of past posts (avoids repeating the same setup)
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: post-state-${{ github.run_id }}
+          restore-keys: post-state-
+      - name: Pick slot
+        id: slot
+        run: |
+          case "${{ github.event.schedule }}" in
+            "30 10 * * 1-5") echo "hour=7"  >> "$GITHUB_OUTPUT" ;;
+            "45 12 * * 1-5") echo "hour=9"  >> "$GITHUB_OUTPUT" ;;
+            "30 15 * * 1-5") echo "hour=12" >> "$GITHUB_OUTPUT" ;;
+            "30 22 * * 1-5") echo "hour=19" >> "$GITHUB_OUTPUT" ;;
+            *)              echo "hour=${{ inputs.hour }}" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Check bot access
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        run: python scrape.py channels
+      - name: Post
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          MPLBACKEND: Agg
+        run: |
+          touch state.json; [ -s state.json ] || echo "{}" > state.json
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" = "test" ]; then
+            python scrape.py test --live
+          else
+            python scrape.py slot ${{ steps.slot.outputs.hour }} --live
+          fi
+      - name: Save memory of past posts
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: post-state-${{ github.run_id }}
+      - name: Keep charts as run artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: charts
+          path: charts/*.png
+          retention-days: 7
