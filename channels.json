@@ -1,0 +1,22 @@
+[
+  {
+    "chat": "@sanstostrades",
+    "brand": "Gabriel Santos",
+    "lang": "pt",
+    "markets": [
+      "XAUUSD",
+      "EURUSD",
+      "GBPUSD"
+    ],
+    "slots": [
+      7,
+      9,
+      12,
+      19
+    ],
+    "footer": "",
+    "quiet_hours": [],
+    "token_env": "TG_BOT_TOKEN",
+    "enabled": true
+  }
+]
