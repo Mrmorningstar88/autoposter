@@ -851,8 +851,12 @@ def reaction(fig, q, top):
     fig.text(0.915, top - 0.03, f" {'▲' if up else '▼'} {pct(q['chg'])} hoje ", fontsize=12, color=C["bg"], fontweight="bold",
              ha="right", va="top", bbox=dict(boxstyle="round,pad=0.35,rounding_size=0.3", fc=col, ec="none"))
     h = top - bottom - 0.16
-    if h > 0.06 and len(q["spark"]) > 3:
-        ax = fig.add_axes([0.085, bottom + 0.035, 0.83, h], zorder=3); ax.axis("off")
+    if len(q["spark"]) > 3:
+        if h > 0.06:                                       # room under the price: full-width chart
+            rect = [0.085, bottom + 0.035, 0.83, h]
+        else:                                              # short panel: chart to the right of the price
+            rect = [0.42, bottom + 0.035, 0.49, max(top - bottom - 0.10, 0.04)]
+        ax = fig.add_axes(rect, zorder=3); ax.axis("off")
         s_ = q["spark"]
         ax.plot(range(len(s_)), s_, color=col, lw=2.2)
         ax.fill_between(range(len(s_)), s_, min(s_), color=col, alpha=0.14, lw=0)
