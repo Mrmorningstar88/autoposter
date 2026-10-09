@@ -62,8 +62,16 @@ def load():
     return st.setdefault("_daily", {}), st
 
 
+def _plain(o):
+    """numpy numbers/bools from the chart engine -> plain JSON values (memory must always save)."""
+    return o.item() if hasattr(o, "item") else str(o)
+
+
 def save(st):
-    json.dump(st, open(S.STATE_FILE, "w"))
+    tmp = S.STATE_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(st, f, default=_plain)
+    os.replace(tmp, S.STATE_FILE)                         # never leave a half-written memory file
 
 
 # ---------------------------------------------------------------- market data
@@ -218,15 +226,16 @@ def owner_chat(ch, ctx):
     return None
 
 
-def notify_owner(ch, text, ctx):
+def notify_owner(ch, text, ctx, to_issue=True):
     print("  [report]\n" + text)
     if os.getenv("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
             f.write("```\n" + text + "\n```\n")
     if not ctx["live"]:
         return
-    with open(REPORT_FILE, "a") as f:
-        f.write(text + "\n\n")
+    if to_issue:                                         # poll reports also go to the "Relatório de enquetes" issue
+        with open(REPORT_FILE, "a") as f:
+            f.write(text + "\n\n")
     owner = owner_chat(ch, ctx)
     if owner:
         j = S.tg(os.getenv(ch["token_env"]), "sendMessage", data={"chat_id": owner, "text": text})
@@ -373,9 +382,9 @@ def close_poll(ch, ctx, late=False):
     return rec
 
 
-def safe_report(ch, ctx, text):
+def safe_report(ch, ctx, text, to_issue=True):
     try:
-        notify_owner(ch, text, ctx)
+        notify_owner(ch, text, ctx, to_issue)
     except Exception as e:                                # a report must never block the slot's post
         print(f"  ! report not delivered: {e}")
 
@@ -415,6 +424,7 @@ def send_poll(ch, spec, ctx):
                    "options": json.dumps([{"text": f"{POLL_ICON.get(k, '')} {A[k]['label']}".strip()} for k in spec["keys"]]),
                    "disable_notification": ctx["hour"] in (ch.get("quiet_hours") or [])})
     print(f"  → {ch['chat']} poll: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
+    ctx["sent_poll"] = j
     if j.get("ok"):
         ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time(),
                                      poll_id=j["result"].get("poll", {}).get("id"))
@@ -703,7 +713,7 @@ def finish_signal(ch, ctx, name, tf, plan, p, cap, origin):
     h = hook(ch)
     cap = cap.replace("\n\n⚠️", (f"\n\n{h}" if h else "") + "\n\n⚠️", 1)
     rec = dict(key=S.setup_key(name, plan), name=name, tf=tf, side=plan["side"], entry=plan["entry"], sl=plan["sl"],
-               tp1=plan["tp1"], tp2=plan["tp2"], at_market=plan["at_market"], ts=time.time(), origin=origin, followed=False)
+               tp1=plan["tp1"], tp2=plan["tp2"], at_market=bool(plan["at_market"]), ts=time.time(), origin=origin, followed=False)
     return (p, cap, {"signal": rec})
 
 
@@ -1024,6 +1034,7 @@ def run(hour, live):
             S.use_branding(ch)
             cd = d.setdefault(str(ch["chat"]), {})
             ctx = dict(d=cd, live=live, basis=basis, hour=hour)
+            sent, failed_before = [], len(S.FAILURES)
             try:
                 if os.getenv(ch["token_env"]):
                     try:
@@ -1032,15 +1043,23 @@ def run(hour, live):
                         print(f"  ! could not read bot updates: {e}")
                 for it in fn(ch, ctx):
                     if isinstance(it, dict) and "poll" in it:
-                        send_poll(ch, it["poll"], ctx); continue
+                        send_poll(ch, it["poll"], ctx)
+                        j = ctx.get("sent_poll") or {}
+                        if j.get("ok"):
+                            sent.append(dict(what="Poll: " + it["poll"]["question"], id=first_id(j)))
+                        continue
                     if isinstance(it, dict) and "album" in it:
                         j = send_album(ch, it["album"], it["cap"], live, hour)
                         if j.get("ok") and live and it.get("after"):
                             it["after"]()
+                        if j.get("ok") and live:
+                            sent.append(dict(what=f"News carousel ({len(it['album'])} slides)", id=first_id(j)))
                         continue
                     path, cap, extra = (tuple(it) + ({},))[:3]
                     j = send_photo(ch, path, cap, live, hour)
                     if j.get("ok") and live:
+                        sent.append(dict(what=next((l for l in cap.splitlines() if l.strip()), os.path.basename(path))[:90],
+                                         id=first_id(j)))
                         if extra.get("after"):
                             extra["after"]()
                         if extra.get("signal"):
@@ -1051,6 +1070,13 @@ def run(hour, live):
             except Exception as e:
                 import traceback; traceback.print_exc()
                 print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"])
+            if live:
+                day = cd.setdefault("log", {}).setdefault(f"{datetime.now(TZ):%Y-%m-%d}", {})
+                day[str(hour)] = dict(kind=kind, sent=sent, failed=len(S.FAILURES) > failed_before, t=time.time())
+                for k in [k for k in cd["log"] if k < (datetime.now(TZ) - timedelta(days=10)).strftime("%Y-%m-%d")]:
+                    del cd["log"][k]
+                if hour == max(slots.SLOT_HOURS):          # after the last slot: the owner's end-of-day report
+                    safe_report(ch, ctx, day_report(ch, cd), to_issue=False)
         if live and not S.FAILURES:                      # later cron attempts for this slot will skip it
             done = st.setdefault("_done", {})
             done[slots.done_key(hour)] = time.time()
@@ -1088,6 +1114,55 @@ def scrub(ids, live):
             print(f"  {handle}/{mid}: {'DM line removed' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
             if not j.get("ok"):
                 S.FAILURES.append(ch["chat"])
+
+
+def first_id(j):
+    """Message id from a Telegram answer (one message or an album); never raises: bookkeeping must not fail a post."""
+    try:
+        r = j.get("result")
+        r = r[0] if isinstance(r, list) and r else r
+        return r.get("message_id") if isinstance(r, dict) else None
+    except Exception:
+        return None
+
+
+SLOT_NAMES = {9: "Good morning + prices", 11: "Asset analysis", 13: "Signal", 15: "Poll", 19: "Signal", 21: "News carousel"}
+
+
+def day_report(ch, cd, date=None):
+    """End-of-day summary for the owner (English): every slot, what went out with links, what failed or was missed."""
+    date = date or f"{datetime.now(TZ):%Y-%m-%d}"
+    day = cd.get("log", {}).get(date, {})
+    handle = str(ch["chat"]).lstrip("@")
+    link = lambda mid: f" https://t.me/{handle}/{mid}" if mid and str(ch["chat"]).startswith("@") else ""
+    lines = [f"📋 Daily report · {ch['chat']} · {datetime.strptime(date, '%Y-%m-%d'):%a %d %b}"]
+    missing = 0
+    for h in (9, 11, 13, 15, 17, 19, 21):
+        if h == 17:
+            lines.append("17:00 ✍️ your manual post"); continue
+        e = day.get(str(h))
+        if not e:
+            missing += 1
+            lines.append(f"{h:02d}:00 ⚠️ {SLOT_NAMES[h]}: not posted (no run reached this slot)")
+        elif e["failed"] and not e["sent"]:
+            missing += 1
+            lines.append(f"{h:02d}:00 ❌ {SLOT_NAMES[h]}: failed")
+        elif not e["sent"]:
+            lines.append(f"{h:02d}:00 ➖ {SLOT_NAMES[h]}: nothing new to post")
+        else:
+            for x in e["sent"]:
+                lines.append(f"{h:02d}:00 ✅ {x['what']}{link(x.get('id'))}")
+    polls = cd.get("polls", [])
+    if polls:
+        p = polls[-1]
+        top = sorted(p["counts"].items(), key=lambda x: -x[1])
+        lines.append(f"Last closed poll ({p['date']}): {p['total']} voters" + (f", winner {A[top[0][0]]['label']}" if p["winner"] else ""))
+    src = [x for x in cd.get("src", []) if datetime.fromtimestamp(x["ts"], TZ).strftime("%Y-%m-%d") == date]
+    seen = cd.get("source_seen")
+    lines.append(f"AFX signals read today: {len(src)}, forwarded: {sum(1 for x in src if x.get('posted'))}"
+                 + ("" if seen else " (no AFX post seen yet)"))
+    lines.append("All slots posted." if not missing else f"{missing} slot(s) missed or failed: see the alert issue on GitHub.")
+    return "\n".join(lines)
 
 
 def report():
