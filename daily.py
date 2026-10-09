@@ -94,7 +94,8 @@ def quotes(keys, basis):
             ref = float(prev.iloc[-1]) if len(prev) else float(c.iloc[0])
             last = float(c.iloc[-1])
             stale = today < datetime.now(TZ).date()          # market not open yet today: the change is the last session's
-            out[k] = dict(a, price=last, chg=(last / ref - 1) * 100, spark=[float(x) for x in c.iloc[-48:]], stale=stale)
+            ago = "ontem" if today == datetime.now(TZ).date() - timedelta(days=1) else WEEKDAYS[today.weekday()].lower()
+            out[k] = dict(a, price=last, chg=(last / ref - 1) * 100, spark=[float(x) for x in c.iloc[-48:]], stale=stale, ago=ago)
         except Exception as e:
             print(f"  ! no data for {k}: {e}")
     return out
@@ -121,13 +122,13 @@ VOICE = ("Você escreve posts de Telegram para Gabriel Santos, trader brasileiro
          "Responda só com o texto do post, sem aspas, sem markdown (sem ** nem #).")
 
 
-def ai(task, facts, max_chars):
+def ai(task, facts, max_chars, emoji=True):
     if not os.getenv("ANTHROPIC_API_KEY"):
         return None
     try:
         import anthropic
         r = anthropic.Anthropic().beta.messages.create(
-            model=AI_MODEL, max_tokens=4000, system=f"{VOICE} {EMOJI_USE}", betas=["server-side-fallback-2026-07-01"],
+            model=AI_MODEL, max_tokens=4000, system=f"{VOICE} {EMOJI_USE if emoji else 'Não use emojis.'}", betas=["server-side-fallback-2026-07-01"],
             extra_body={"fallbacks": "default", "output_config": {"effort": "low"}},
             messages=[{"role": "user", "content": f"{task}\nLimite: {max_chars} caracteres.\n\nDados:\n{facts}"}])
         if r.stop_reason == "refusal":
@@ -146,10 +147,24 @@ def ai(task, facts, max_chars):
 # emoji.json maps ordinary emoji to animated (custom) ones. Telegram shows the animated emoji only when the bot may use them
 # (in channels: a bot with a Fragment username); otherwise it shows the ordinary emoji, so the posts read the same either way.
 def _load_emoji():
+    """emoji.json, keeping only well-formed parts: a bad edit switches the extras off, it never stops the posts."""
     try:
-        return json.load(open(os.path.join(S.HERE, "emoji.json")))
-    except (OSError, ValueError):
+        e = json.load(open(os.path.join(S.HERE, "emoji.json")))
+    except (OSError, ValueError) as x:
+        print(f"  ! emoji.json not used: {x}")
         return {}
+    if not isinstance(e, dict):
+        return {}
+    for part in ("assets", "bullet", "symbols", "general"):
+        if not isinstance(e.get(part), dict):
+            e[part] = {}
+    e["assets"] = {k: v for k, v in e["assets"].items() if k in A and isinstance(v, dict)
+                   and isinstance(v.get("id"), str) and isinstance(v.get("alt"), str) and v["alt"]}
+    for part in ("symbols", "general"):
+        e[part] = {a: i for a, i in e[part].items() if isinstance(i, str) and i and a and a[0] > "\u2000"}
+    if not (isinstance(e["bullet"].get("id"), str) and isinstance(e["bullet"].get("alt"), str) and e["bullet"]["alt"]):
+        e["bullet"] = {}
+    return e
 
 
 EMO = _load_emoji()
@@ -213,17 +228,17 @@ def rich(text, bold=True):
 def _emoji_maps():
     """alt emoji -> id: symbols (fixed meaning) over general (faces, hands); assets: alt -> [(id, asset)] (only on lines
     that name the asset, e.g. the Bitcoin logo)."""
-    sym = {a: i for a, i in (EMO.get("general") or {}).items() if i and a and ord(a[0]) > 0x2000}
-    sym.update({a: i for a, i in (EMO.get("symbols") or {}).items() if i and a})
+    sym = dict(EMO.get("general") or {})
+    sym.update(EMO.get("symbols") or {})
     assets = {}
     for k, v in (EMO.get("assets") or {}).items():
-        if v.get("id") and v.get("alt") and k in A:
-            assets.setdefault(v["alt"], []).append((v["id"], k))
+        assets.setdefault(v["alt"], []).append((v["id"], k))
     return sym, assets
 
 
 def animate(html):
-    """Wrap each mapped ordinary emoji in <tg-emoji>, keeping the ordinary one inside (what non-capable chats show)."""
+    """Wrap each mapped ordinary emoji in <tg-emoji>, keeping the ordinary one inside exactly as written (what readers see
+    when the animated one cannot be shown)."""
     sym, assets = _emoji_maps()
     bullet = EMO.get("bullet") or {}
     alts = set(sym) | set(assets)
@@ -231,18 +246,21 @@ def animate(html):
         return html
     canon = {x: a for a in alts for x in _variants(a)}
     pat = re.compile("(?<!\u200d)(?:" + "|".join(re.escape(x) for x in sorted(canon, key=len, reverse=True))
-                     + ")(?![\U0001F3FB-\U0001F3FF\u200d])")
+                     + ")(?![\ufe0f\U0001F3FB-\U0001F3FF\u200d])|[\U0001F1E6-\U0001F1FF]{2}")   # flags always in pairs
     tag = lambda eid, alt: f'<tg-emoji emoji-id="{eid}">{alt}</tg-emoji>'
 
     def line_sub(line):
         def one(m):
+            if m.group(0) not in canon:
+                return m.group(0)
             alt = canon[m.group(0)]
             named = [i for i, k in assets.get(alt, []) if re.search(re.escape(A[k]["label"]), line, re.I)]
             if len(named) == 1:
-                return tag(named[0], alt)
-            return tag(sym[alt], alt) if alt in sym else m.group(0)
-        if bullet.get("id") and bullet.get("alt") and line.startswith(bullet["alt"] + " "):
-            return tag(bullet["id"], bullet["alt"]) + pat.sub(one, line[len(bullet["alt"]):])
+                return tag(named[0], m.group(0))
+            return tag(sym[alt], m.group(0)) if alt in sym else m.group(0)
+        b = re.match(r"(<b>)?" + re.escape(bullet["alt"]) + " ", line) if bullet.get("id") else None
+        if b:
+            return (b[1] or "") + tag(bullet["id"], bullet["alt"]) + pat.sub(one, line[b.end() - 1:])
         return pat.sub(one, line)
     return "\n".join(line_sub(l) for l in html.split("\n"))
 
@@ -318,7 +336,7 @@ def send_photo(ch, path, cap, live, hour):
         print(f"  · {os.path.basename(path)}: same content is already in the channel, not posted again")
         return {"ok": False, "duplicate": True}
     if not live:
-        print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}\n{cap}\n  html: {rich(cap)}\n")
+        print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}\n{cap}\n  html: {safe_rich(cap)}\n")
         return {"ok": True, "result": {"message_id": 0}}
     silent = hour in (ch.get("quiet_hours") or [])
     with open(path, "rb") as f:
@@ -336,7 +354,7 @@ def send_album(ch, paths, cap, live, hour):
         print("  · album: same content is already in the channel, not posted again")
         return {"ok": False, "duplicate": True}
     if not live:
-        print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap}\n  html: {rich(cap)}\n")
+        print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap}\n  html: {safe_rich(cap)}\n")
         return {"ok": True}
     files = {f"f{i}": open(p, "rb") for i, p in enumerate(paths[:10])}
     silent = hour in (ch.get("quiet_hours") or [])
@@ -418,7 +436,7 @@ def tile(fig, x, y, w, h, q, spark=True):
     col = C["buy"] if up else C["sell"]
     fig.text(x + 0.018, y + h - 0.022, q["label"].upper(), fontsize=10, color=C["muted"], fontweight="bold", va="top")
     fig.text(x + 0.018, y + 0.022, fmt(q["price"], q["dec"]), fontsize=17, color=C["text"], fontweight="bold", va="bottom")
-    fig.text(x + w - 0.018, y + h - 0.02, f" {'▲' if up else '▼'} {pct(q['chg'])}{' ontem' if q.get('stale') else ''} ", fontsize=10, color=C["bg"], fontweight="bold",
+    fig.text(x + w - 0.018, y + h - 0.02, f" {'▲' if up else '▼'} {pct(q['chg'])}{' ' + q.get('ago', 'ontem') if q.get('stale') else ''} ", fontsize=10, color=C["bg"], fontweight="bold",
              ha="right", va="top", bbox=dict(boxstyle="round,pad=0.3,rounding_size=0.3", fc=col, ec="none"))
     if spark and len(q["spark"]) > 3:
         ax = fig.add_axes([x + w * 0.56, y + 0.018, w * 0.40, h * 0.42], zorder=3); ax.axis("off")
@@ -445,7 +463,7 @@ def market_card(qs, title, name):
 
 def move(q):
     """'📈 +0.12%' / '📉 -0.40%', with 'ontem' when the market has not opened yet today."""
-    return f"{UP if q['chg'] >= 0 else DOWN} {pct(q['chg'])}{' (ontem)' if q.get('stale') else ''}"
+    return f"{UP if q['chg'] >= 0 else DOWN} {pct(q['chg'])}{f" ({q.get('ago', 'ontem')})" if q.get('stale') else ''}"
 
 
 def movers_text(qs, n=4):
@@ -455,7 +473,7 @@ def movers_text(qs, n=4):
 
 def facts_text(qs):
     return "\n".join(f"{ICON.get(k, '')} {q['label']}: {fmt(q['price'], q['dec'])} ("
-                     + (f"{pct(q['chg'])} no pregão de ontem; mercado ainda não abriu hoje" if q.get("stale") else f"{pct(q['chg'])} no dia")
+                     + (f"{pct(q['chg'])} no pregão de {q.get('ago', 'ontem')}; mercado ainda não abriu hoje" if q.get("stale") else f"{pct(q['chg'])} no dia")
                      + ")" for k, q in qs.items())
 
 
@@ -1195,11 +1213,11 @@ def slot_news(ch, ctx):
     blurbs = {}
     raw = ai("Para cada manchete numerada, escreva UMA frase curta (até 140 caracteres) explicando por que ela importa para o "
              "investidor, sem acrescentar fatos que não estejam na manchete. Responda no formato 'N: frase', uma por linha.",
-             "\n".join(f"{i + 1}: {h['title']}" for i, h in enumerate(heads)), 900)
+             "\n".join(f"{i + 1}: {h['title']}" for i, h in enumerate(heads)), 900, emoji=False)
     for line in (raw or "").splitlines():
-        m = re.match(r"\s*(\d+)\s*[:.)-]\s*(.+)", line)
-        if m:
-            blurbs[int(m.group(1))] = m.group(2).strip()
+        m = re.match(r"\W*(\d+)\s*[:.)-]\s*(.+)", line)
+        if m:                                              # drawn on the slide: the slide font has no emoji
+            blurbs[int(m.group(1))] = re.sub(r"\s+", " ", re.sub(r"[\U0001F000-\U0001FAFF\u2190-\u2BFF\ufe0f\u200d]", "", m.group(2))).strip()
     paths = [news_cover(heads, qs)] + [news_slide(i + 1, len(heads), h, qs, blurbs.get(i + 1)) for i, h in enumerate(heads)]
     paths.append(market_card(qs, "Fechamento do dia", "news_close.png"))
     cap = ai("Escreva o resumo das notícias do dia para o canal, em tom respeitoso e sóbrio: uma linha de abertura, 4 ou 5 tópicos "
@@ -1241,6 +1259,7 @@ def run(hour, live):
             cd = d.setdefault(str(ch["chat"]), {})
             ctx = dict(d=cd, live=live, basis=basis, hour=hour)
             sent, failed_before = [], len(S.FAILURES)
+            EMOJI_STATS.update(sent=0, kept=0)
             try:
                 if os.getenv(ch["token_env"]):
                     try:
@@ -1312,7 +1331,7 @@ def scrub(ids, live):
             for br in el.find_all("br"):
                 br.replace_with("\n")
             lines = el.get_text().split("\n")
-            kept = [l for l in lines if not (l.strip().startswith(HOOK_START) and re.search(r"privado|mensagem|chama", l, re.I))]
+            kept = [l for l in lines if not (l.strip().startswith(HOOK_START) and re.search(r"@\w{4,}", l))]
             cap = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
             if kept == lines:
                 print(f"  {handle}/{mid}: no DM line, unchanged"); continue
