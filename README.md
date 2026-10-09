@@ -21,6 +21,7 @@ See **RULES.md** for the owner's rule book (no repeats, no personal info, never 
 3. **DM line**: the public handle for DM requests goes in `channels.json` → `"dm"` (empty = no DM line). Never a personal account.
 4. **Poll reports and alerts by Telegram**: open the bot in Telegram and press **Start** (as the `dm` handle). The next run learns your chat id automatically. Reports are also posted as comments on the "📊 Relatório de enquetes" issue.
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.
+6. **Emoji**: every asset line starts with its icon (🥇 Ouro, 🥈 Prata, 🇪🇺 EUR/USD, 🇬🇧 GBP/USD, 🇯🇵 USD/JPY, 💵 Dólar, 💰 Bitcoin, 🛢 Petróleo, 🇺🇸 S&P 500, 🇧🇷 Ibovespa), with 📈/📉 for direction, a bold title and bold labels. `emoji.json` maps these emoji to animated (custom) ones from Telegram packs. Telegram shows animated emoji in a channel only when the bot has a collectible username bought on Fragment and assigned to it. Until then readers see the ordinary emoji in the same places, and the daily report says which one is showing. Run the workflow in `emoji` mode to list packs (numbered sheets in the run's `charts` artifact) when you want to change an emoji.
 
 ## When something breaks
 

@@ -17,6 +17,7 @@ These rules override everything else in this repository. Any change must keep th
 3. **Never stop posting until the owner says so.**
    - Two independent timers start every slot: GitHub's schedule (:00, :20, :40) and the Claude backup timer (:02).
    - A missed slot is caught up within 90 minutes. Errors in one step (bot check, reports, updates, memory) never block the post.
+   - Formatting (bold, animated emoji) never blocks a post: if Telegram rejects it or it fails, the same text goes out plain.
    - A signal slot is never left empty: with no new signal or result, it posts a market panorama of an asset not covered yet that day.
    - Failures alert the owner by Telegram DM and a GitHub issue. Scheduled runs keep the workflow enabled.
    - Only the owner pauses posting (Actions → Disable workflow, and the backup timer in Claude → Routines).
