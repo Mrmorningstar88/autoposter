@@ -93,7 +93,8 @@ def quotes(keys, basis):
             prev = c[c.index.date < today]
             ref = float(prev.iloc[-1]) if len(prev) else float(c.iloc[0])
             last = float(c.iloc[-1])
-            out[k] = dict(a, price=last, chg=(last / ref - 1) * 100, spark=[float(x) for x in c.iloc[-48:]])
+            stale = today < datetime.now(TZ).date()          # market not open yet today: the change is the last session's
+            out[k] = dict(a, price=last, chg=(last / ref - 1) * 100, spark=[float(x) for x in c.iloc[-48:]], stale=stale)
         except Exception as e:
             print(f"  ! no data for {k}: {e}")
     return out
@@ -272,7 +273,7 @@ def tile(fig, x, y, w, h, q, spark=True):
     col = C["buy"] if up else C["sell"]
     fig.text(x + 0.018, y + h - 0.022, q["label"].upper(), fontsize=10, color=C["muted"], fontweight="bold", va="top")
     fig.text(x + 0.018, y + 0.022, fmt(q["price"], q["dec"]), fontsize=17, color=C["text"], fontweight="bold", va="bottom")
-    fig.text(x + w - 0.018, y + h - 0.02, f" {'▲' if up else '▼'} {pct(q['chg'])} ", fontsize=10, color=C["bg"], fontweight="bold",
+    fig.text(x + w - 0.018, y + h - 0.02, f" {'▲' if up else '▼'} {pct(q['chg'])}{' ontem' if q.get('stale') else ''} ", fontsize=10, color=C["bg"], fontweight="bold",
              ha="right", va="top", bbox=dict(boxstyle="round,pad=0.3,rounding_size=0.3", fc=col, ec="none"))
     if spark and len(q["spark"]) > 3:
         ax = fig.add_axes([x + w * 0.56, y + 0.018, w * 0.40, h * 0.42], zorder=3); ax.axis("off")
@@ -299,11 +300,14 @@ def market_card(qs, title, name):
 
 def movers_text(qs, n=4):
     ks = sorted(qs, key=lambda k: -abs(qs[k]["chg"]))[:n]
-    return "\n".join(f"{'🟢' if qs[k]['chg'] >= 0 else '🔴'} {qs[k]['label']} {fmt(qs[k]['price'], qs[k]['dec'])} ({pct(qs[k]['chg'])})" for k in ks)
+    return "\n".join(f"{'🟢' if qs[k]['chg'] >= 0 else '🔴'} {qs[k]['label']} {fmt(qs[k]['price'], qs[k]['dec'])} "
+                     f"({pct(qs[k]['chg'])}{' ontem' if qs[k].get('stale') else ''})" for k in ks)
 
 
 def facts_text(qs):
-    return "\n".join(f"{q['label']}: {fmt(q['price'], q['dec'])} ({pct(q['chg'])} no dia)" for q in qs.values())
+    return "\n".join(f"{q['label']}: {fmt(q['price'], q['dec'])} ("
+                     + (f"{pct(q['chg'])} no pregão de ontem; mercado ainda não abriu hoje" if q.get("stale") else f"{pct(q['chg'])} no dia")
+                     + ")" for q in qs.values())
 
 
 # ================================================================= 09:00 morning
