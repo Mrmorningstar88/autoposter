@@ -1297,6 +1297,7 @@ def run(hour, live):
                 print(f"  ✗ {ch['chat']} {kind} failed: {e}"); S.FAILURES.append(ch["chat"])
             if live and EMOJI_STATS["sent"]:                # did Telegram keep the animated emoji? (owner's daily report)
                 cd["emoji_status"] = dict(t=time.time(), kept=EMOJI_STATS["kept"] > 0)
+                print(f"  animated emoji: Telegram kept {EMOJI_STATS['kept']} of {EMOJI_STATS['sent']}")
             if live:
                 day = cd.setdefault("log", {}).setdefault(f"{datetime.now(TZ):%Y-%m-%d}", {})
                 day[str(hour)] = dict(kind=kind, sent=sent, failed=len(S.FAILURES) > failed_before, t=time.time())
