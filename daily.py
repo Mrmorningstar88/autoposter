@@ -608,6 +608,9 @@ def pull_updates(ch, ctx):
             d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
             sig = parse_signal(post.get("text") or post.get("caption") or "")
             print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
+            if not sig:                                   # private run log only: lets the parser be fixed for new formats
+                raw = (post.get("text") or post.get("caption") or "[no text: " + ",".join(k for k in post if k in ("photo", "video", "document", "poll")) + "]")
+                print("    raw: " + raw[:400].replace("\n", " ⏎ "))
             if sig:
                 d.setdefault("src", []).append(dict(sig, ts=post["date"], id=post["message_id"], posted=False))
         if len(j["result"]) < 100 or not ctx["live"]:   # a dry run never pages: a higher offset deletes updates
