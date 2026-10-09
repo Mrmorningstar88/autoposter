@@ -537,29 +537,54 @@ RU = [(r"ПОКУПК\w*|ПОКУПАЕМ|ЛОНГ|LONG", "BUY"), (r"ПРОДА�
 NUM = r"(\d+(?:\.\d+)?)"
 
 
+FX = "USD|EUR|GBP|JPY|CHF|AUD|NZD|CAD"
+
+
+def instrument_of(t):
+    """Known instrument, or any major FX pair written like USD/CHF or EURJPY (added to the chart markets on the fly)."""
+    name = S.instrument(t)
+    if name:
+        return name
+    m = re.search(rf"\b({FX})\s*/?\s*({FX})\b", t)
+    if not m or m.group(1) == m.group(2):
+        return None
+    name = m.group(1) + m.group(2)
+    if name not in [n for n, *_ in S.TA_MARKETS + S.EXTRA_MARKETS]:
+        jpy = "JPY" in name
+        S.EXTRA_MARKETS.append((name, f"{name}=X", 0.01 if jpy else 0.0001, 3 if jpy else 5))
+        S.NAMES[name] = f"{name[:3]}/{name[3:]}"
+    return name
+
+
 def parse_signal(text):
-    """Forex signal text (EN/RU/PT) -> dict(name, side, entry, sl, tp1, tp2, at_market) or None."""
-    t = re.sub(r"(?<=\d),(?=\d)", ".", text.upper())
+    """Forex signal text (EN/RU/PT) -> dict(name, side, entry, sl, tp1, tp2, at_market) or None.
+    Handles AFX's format: 'SELL XAU/USD · 📍 4182 - 4184 · Stop loss (SL): 4202 · Take profit 1: 4179 …'."""
+    t = re.sub(r"(?<=\d),(?=\d)", ".", text.upper()).replace("📍", " ENTRY ")
     for rx, rep in RU:
         t = re.sub(rx, rep, t)
-    name = S.instrument(t)
+    name = instrument_of(t)
     side = re.search(r"\b(BUY|SELL)\b", t)
     if not name or not side:
         return None
-    sl = re.search(r"\bSL\b\s*[:\-=@]?\s*" + NUM, t)
-    tps = [float(x) for x in re.findall(r"\bTP(?:\s?\d(?![\d.]))?\s*[:\-=@.)]?\s*" + NUM, t)]
-    m = (re.search(r"\bENTRY\b\s*[:\-=@]?\s*" + NUM + r"(?:\s*[-–/]\s*" + NUM + ")?", t)
-         or re.search(r"\b(?:BUY|SELL)\b(?:\s*(?:NOW|LIMIT|STOP))?\s*(?:@|AT|:|-)?\s*" + NUM + r"(?:\s*[-–/]\s*" + NUM + ")?", t))
+    sl = re.search(r"\bSL\b[^\w\n]{0,6}" + NUM, t)
+    tps = [float(x) for x in re.findall(r"\bTP(?:\s?\d(?![\d.]))?[^\w\n]{0,6}" + NUM, t)]
+    rng = NUM + r"(?:\s*[-–/]\s*" + NUM + ")?"
+    m = re.search(r"\bENTRY\b[^\w\n]{0,6}" + rng, t)
+    if not m:                                             # numbers between the side and the first SL/TP, instrument removed
+        stop = re.search(r"\b(SL|TP)\b", t[side.end():])
+        seg = t[side.end(): side.end() + stop.start()] if stop else t[side.end(): side.end() + 60]
+        seg = re.sub(rf"\b({FX})\s*/?\s*({FX})\b|\b(US30|NAS100|US100|XAU\s*/?\s*USD|XAG\s*/?\s*USD|BTC\w*)\b", " ", seg)
+        m = re.search(rng, seg)
     if not (sl and tps and m):
         return None
     ent = [float(x) for x in m.groups() if x]
-    entry, s, sd = sum(ent) / len(ent), float(sl.group(1)), side.group(1)
+    entry, s_, sd = sum(ent) / len(ent), float(sl.group(1)), side.group(1)
     tp1 = tps[0]
-    tp2 = tps[1] if len(tps) > 1 else tp1 + (tp1 - entry)
-    ok = (s < entry < tp1 <= tp2) if sd == "BUY" else (s > entry > tp1 >= tp2)
+    tp2 = tps[-1] if len(tps) > 1 else tp1 + (tp1 - entry)    # card shows the first and the final target
+    ok = (s_ < entry < tp1 <= tp2) if sd == "BUY" else (s_ > entry > tp1 >= tp2)
     if not ok:
         return None
-    return dict(name=name, side=sd, entry=entry, sl=s, tp1=tp1, tp2=tp2, at_market="LIMIT" not in t)
+    return dict(name=name, side=sd, entry=entry, sl=s_, tp1=tp1, tp2=tp2, at_market="LIMIT" not in t)
 
 
 def pull_updates(ch, ctx):
@@ -612,6 +637,8 @@ def pull_updates(ch, ctx):
             d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
             sig = parse_signal(post.get("text") or post.get("caption") or "")
             print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
+            if not sig and (post.get("text") or post.get("caption")):
+                d.setdefault("src_raw", []).append(dict(id=post["message_id"], ts=post["date"], text=post.get("text") or post.get("caption")))
             if not sig:                                   # private run log only: lets the parser be fixed for new formats
                 raw = (post.get("text") or post.get("caption") or "[no text: " + ",".join(k for k in post if k in ("photo", "video", "document", "poll")) + "]")
                 print("    raw: " + raw[:400].replace("\n", " ⏎ "))
@@ -619,6 +646,13 @@ def pull_updates(ch, ctx):
                 d.setdefault("src", []).append(dict(sig, ts=post["date"], id=post["message_id"], posted=False))
         if len(j["result"]) < 100 or not ctx["live"]:   # a dry run never pages: a higher offset deletes updates
             break
+    for r in list(d.get("src_raw", [])):                   # re-read posts an older parser did not understand
+        sig = parse_signal(r["text"])
+        if sig:
+            print(f"  · source post {r['id']} now recognised: {sig['name']} {sig['side']}")
+            d.setdefault("src", []).append(dict(sig, ts=r["ts"], id=r["id"], posted=False))
+            d["src_raw"].remove(r)
+    d["src_raw"] = [r for r in d.get("src_raw", []) if time.time() - r["ts"] < 86400][-30:]
     d["src"] = [s for s in d.get("src", []) if time.time() - s["ts"] < 3 * 86400]
 
 
