@@ -10,17 +10,17 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto = post whatever slot is due now, once (used by backup timers) · slot = run the chosen slot now · test = post one entry chart · report = poll history"
+        description: "auto = post whatever slot is due now, once (used by backup timers) · slot = run the chosen slot now · test = post one entry chart · report = poll history · emoji = list animated emoji packs (artifact)"
         default: "slot"
         type: choice
-        options: [slot, auto, test, report, scrub]
+        options: [slot, auto, test, report, scrub, emoji]
       hour:
         description: "BRT slot for slot mode"
         default: "9"
         type: choice
         options: ["9", "11", "13", "15", "19", "21"]
       message_ids:
-        description: "scrub mode only: channel message numbers to remove the DM line from, e.g. 19 20"
+        description: "scrub mode: channel message numbers to remove the DM line from, e.g. 19 20 · emoji mode: extra pack names"
         default: ""
       dry_run:
         description: "Build the posts without sending them"
@@ -103,6 +103,7 @@ jobs:
             workflow_dispatch/test)   python scrape.py test $LIVE ;;
             workflow_dispatch/report) python daily.py report ;;
             workflow_dispatch/scrub)  python daily.py scrub ${{ inputs.message_ids }} $LIVE ;;
+            workflow_dispatch/emoji)  python emoji_catalog.py ${{ inputs.message_ids }} ;;
             *)                        python daily.py run ${{ steps.slot.outputs.hour }} $LIVE ;;
           esac
       - name: Send poll report to the "Poll reports" issue
@@ -120,7 +121,7 @@ jobs:
           fi
           [ -n "$NUM" ] && gh issue comment "$NUM" -R "$R" --body-file report.md
       - name: Save memory
-        if: always() && steps.slot.outputs.hour != '' && steps.guard.outputs.degraded != '1'   # skipped or degraded runs never overwrite it
+        if: always() && steps.slot.outputs.hour != '' && steps.guard.outputs.degraded != '1' && inputs.mode != 'emoji'   # skipped or degraded runs never overwrite it
         uses: actions/cache/save@v4
         with:
           path: state.json
@@ -130,7 +131,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: charts
-          path: charts/*.png
+          path: |
+            charts/*.png
+            charts/*.json
           retention-days: 7
       - name: Keep the schedule alive
         if: always() && github.event_name == 'schedule'

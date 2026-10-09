@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "reference_ids": ["5231200819986047254", "5465465383035083768", "5458702441631456730", "5465211236935278663", "5818797194127346654"],
+  "packs": ["FlagsEmoji", "CountryFlagsEmoji", "FlagsByKoylli", "CryptoIcons", "TradingEmoji", "Crypto_Emoji", "StocksEmoji",
+            "FinanceEmoji", "MoneyEmoji", "BusinessEmoji", "BusinessIcons", "TradingIcons", "ForexEmoji", "GoldEmoji",
+            "WeatherEmoji", "ArrowsEmoji", "IconsEmoji", "NewsEmoji", "EmojiIcons", "AnimatedEmoji", "AnimatedFlags",
+            "CoinsEmoji", "ChartsEmoji", "DotsEmoji", "BrazilEmoji", "Emoji3D", "Animated3DEmoji"],
+  "assets": {},
+  "symbols": {}
+}
