@@ -3,10 +3,10 @@ name: Post charts to Telegram
 on:
   schedule:
     # GitHub cron is UTC; Brazil (BRT) = UTC-3. Slots 09/11/13/15/19 BRT Mon–Fri and 21 BRT (00 UTC Tue–Sat).
-    # GitHub drops and delays scheduled runs, so each slot gets three attempts; the first one that runs posts it
+    # GitHub drops and delays scheduled runs (worst at :00, its busiest minute), so each slot gets three attempts off the hour; the first one that runs posts it
     # and the others skip (slots.py). 17:00 BRT is posted by hand.
-    - cron: "0,20,40 12,14,16,18,22 * * 1-5"
-    - cron: "0,20,40 0 * * 2-6"
+    - cron: "7,27,47 12,14,16,18,22 * * 1-5"
+    - cron: "7,27,47 0 * * 2-6"
   workflow_dispatch:
     inputs:
       mode:

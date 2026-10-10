@@ -1,7 +1,7 @@
 """
 Which posting slot is due right now (standard library only, so the workflow can ask before installing anything).
 
-GitHub's scheduler drops and delays runs, so every slot has several cron attempts (:00, :20, :40). The first
+GitHub's scheduler drops and delays runs, so every slot has several cron attempts (:07, :27, :47). The first
 attempt that runs posts the slot and marks it done in state.json; the others see the mark and skip.
 
   python3 slots.py due [state.json]   -> prints the BRT hour of the slot to run now, or nothing

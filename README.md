@@ -31,5 +31,5 @@ A failed run opens (or comments on) a GitHub issue labelled `autoposter-alert`, 
 
 - **Actions → Post charts to Telegram → Run workflow**: pick `slot` and an hour to post that slot now. Tick *dry run* to only build the images (they are attached to the run as `charts`).
 - Pause everything: **⋯ → Disable workflow**.
-- GitHub drops and delays scheduled runs, so each slot has three attempts (:00, :20, :40 past the hour). The first one that runs posts the slot; the others see it is done and stop after a few seconds. A slot missed entirely is caught up within 90 minutes.
+- GitHub drops and delays scheduled runs, so each slot has three attempts (:07, :27, :47 past the hour; GitHub is busiest at :00). The first one that runs posts the slot; the others see it is done and stop after a few seconds. A slot missed entirely is caught up within 90 minutes.
 - Locally: `python daily.py run 9` (dry run) or `python daily.py run 9 --live`.
