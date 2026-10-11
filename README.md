@@ -12,6 +12,17 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 | 19:00 | Same as 13:00 |
 | 21:00 | News carousel (album): cover with the day's 5 stories, one slide per story with the market's reaction, market-close card; roundup text as caption |
 
+Saturday and Sunday (BRT):
+
+| Time  | Post |
+|-------|------|
+| 09:00 | Manual: good morning, motivational sport post with images |
+| 11:00 | US and world economy carousel: up to 5 stories from the last two days (Fed, Wall Street, China, Europe, oil…), one slide each; stories already used in a carousel are skipped |
+| 13:00 | Manual: motivational video |
+| 15:00 | Manual: luxury car post |
+| 17:00 | Manual: luxury life post |
+| 19:00 | Manual: luxury dinner, family vibes post |
+
 See **RULES.md** for the owner's rule book (no repeats, no personal info, never stop, keep the schedule).
 
 ## Setup

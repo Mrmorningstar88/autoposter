@@ -11,7 +11,8 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("America/Sao_Paulo")
-SLOT_HOURS = (9, 11, 13, 15, 19, 21)     # 17:00 is posted by hand
+SLOT_HOURS = (9, 11, 13, 15, 19, 21)     # Mon–Fri; 17:00 is posted by hand
+WEEKEND_SLOT_HOURS = (11,)               # Sat–Sun: US/world economy news; the other weekend posts are manual
 WINDOW_MIN = 90                          # a slot can still be caught up this long after its time
 
 
@@ -20,12 +21,14 @@ def done_key(hour, now=None):
     return f"{now:%Y-%m-%d}:{hour}"
 
 
+def weekend(now):
+    return now.weekday() >= 5             # Brazil time
+
+
 def due(state, now=None):
     now = now or datetime.now(TZ)
-    if now.weekday() >= 5:               # Mon–Fri, Brazil time
-        return None
     done = state.get("_done", {})
-    for h in sorted(SLOT_HOURS, reverse=True):
+    for h in sorted(WEEKEND_SLOT_HOURS if weekend(now) else SLOT_HOURS, reverse=True):
         start = now.replace(hour=h, minute=0, second=0, microsecond=0)
         if start <= now < start + timedelta(minutes=WINDOW_MIN):
             return None if done_key(h, now) in done else h

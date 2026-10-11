@@ -1,5 +1,5 @@
 """
-Daily content plan for the channel (Brazil time, Mon–Fri). Built on the chart engine in scrape.py.
+Daily content plan for the channel (Brazil time, Mon–Fri, plus a weekend economy post). Built on the chart engine in scrape.py.
 
   09:00 morning   good-morning card with the main markets
   11:00 overview  focus asset (yesterday's poll winner, else the biggest mover) + related markets
@@ -8,6 +8,7 @@ Daily content plan for the channel (Brazil time, Mon–Fri). Built on the chart 
   17:00           posted by hand
   19:00 signal    same as 13:00
   21:00 news      market-close card + short news roundup in Portuguese
+  Sat/Sun 11:00   econ    US and world economy news carousel (the other weekend posts are manual)
 
   python daily.py run HOUR [--live]   build (and with --live post) the slot for that BRT hour
   python daily.py report              poll history (also written to the GitHub job summary)
@@ -1066,10 +1067,11 @@ TAG_COL = {"DÓLAR": "#22C38E", "OURO": "#F2B33D", "PETRÓLEO": "#F08A4B", "BOLS
            "EURO": "#5B8CFF", "LIBRA": "#B07CF0", "IENE": "#F0506E", "EUA": "#5BC0EB", "JUROS": "#E6EAF2"}
 
 
-def news(hours=14):
+def news(hours=14, feeds=None, topics=None):
     items, seen = [], set()
     cut = datetime.now(timezone.utc) - timedelta(hours=hours)
-    for url in NEWS_FEEDS:
+    topics = topics or TOPICS
+    for url in feeds or NEWS_FEEDS:
         try:
             root = ET.fromstring(requests.get(url, headers=S.UA, timeout=30).content)
         except Exception as e:
@@ -1094,7 +1096,7 @@ def news(hours=14):
                 continue
             if dt >= cut and title and key not in seen:
                 seen.add(key)
-                tag = next(((t, a) for t, rx, a in TOPICS if re.search(rx, title.upper())), None)
+                tag = next(((t, a) for t, rx, a in topics if re.search(rx, title.upper())), None)
                 items.append(dict(title=title, dt=dt, src=src.strip(), tag=tag[0] if tag else None, asset=tag[1] if tag else None))
     return sorted(items, key=lambda x: x["dt"], reverse=True)
 
@@ -1120,9 +1122,9 @@ def wrap(text, width):
     return textwrap.wrap(text, width) or [""]
 
 
-def news_cover(heads, qs):
+def news_cover(heads, qs, title="Resumo do dia", sub="o que mexeu com os mercados"):
     now = datetime.now(TZ)
-    fig = fig_base("Resumo do dia", f"{WEEKDAYS[now.weekday()]}, {S.stamp()} {S.TZ_LABEL}  ·  o que mexeu com os mercados")
+    fig = fig_base(title, f"{WEEKDAYS[now.weekday()]}, {S.stamp()} {S.TZ_LABEL}  ·  {sub}")
     import matplotlib.patches as mp
     y = 0.80
     for i, h in enumerate(heads):
@@ -1175,7 +1177,8 @@ def reaction(fig, q, top):
     col = C["buy"] if up else C["sell"]
     fig.text(0.085, top - 0.03, q["label"].upper(), fontsize=11, color=C["muted"], fontweight="bold", va="top")
     fig.text(0.085, top - 0.065, fmt(q["price"], q["dec"]), fontsize=24, color=C["text"], fontweight="bold", va="top")
-    fig.text(0.915, top - 0.03, f" {'▲' if up else '▼'} {pct(q['chg'])} hoje ", fontsize=12, color=C["bg"], fontweight="bold",
+    when = "hoje" if not q.get("stale") else (q.get("ago", "ontem") if q.get("ago", "ontem") == "ontem" else f"na {q['ago']}")
+    fig.text(0.915, top - 0.03, f" {'▲' if up else '▼'} {pct(q['chg'])} {when} ", fontsize=12, color=C["bg"], fontweight="bold",
              ha="right", va="top", bbox=dict(boxstyle="round,pad=0.35,rounding_size=0.3", fc=col, ec="none"))
     h = top - bottom - 0.16
     if len(q["spark"]) > 3:
@@ -1192,14 +1195,15 @@ def reaction(fig, q, top):
 
 
 NEWS_OPEN = ["🌙 Resumo do dia", "🗞 O dia nos mercados", "🌙 Fechamento do dia", "🗞 Resumo da noite"]
-NEWS_CLOSE_FRI = ["Bom fim de semana a todos. Até segunda às 9h.", "Ótimo fim de semana. Segunda tem mais.",
-                  "Boa noite e bom fim de semana. Voltamos na segunda."]
+NEWS_CLOSE_FRI = ["Bom fim de semana a todos. Sábado às 11h tem o resumo da economia.",
+                  "Ótimo fim de semana. Amanhã às 11h, a economia dos EUA e do mundo.",
+                  "Boa noite e bom fim de semana. Sábado e domingo às 11h tem resumo da economia."]
 NEWS_CLOSE = ["Boa noite e até amanhã.", "Bom descanso e até amanhã às 9h.", "Boa noite a todos. Amanhã tem mais.",
               "Obrigado por acompanhar. Boa noite."]
 
 
 def news_close():
-    """Closing line; on Friday it says goodbye until Monday (no posts at the weekend)."""
+    """Closing line; on Friday it wishes a good weekend and points to the weekend economy post."""
     return pick(NEWS_CLOSE_FRI if datetime.now(TZ).weekday() == 4 else NEWS_CLOSE)
 
 
@@ -1222,7 +1226,8 @@ def slot_news(ch, ctx):
     paths.append(market_card(qs, "Fechamento do dia", "news_close.png"))
     cap = ai("Escreva o resumo das notícias do dia para o canal, em tom respeitoso e sóbrio: uma linha de abertura, 4 ou 5 tópicos "
              "curtos (um por linha, começando com •) com o que mais importou, e uma linha final desejando boa noite"
-             + (" e bom fim de semana, avisando que voltamos na segunda-feira" if datetime.now(TZ).weekday() == 4 else "") + ". "
+             + (" e bom fim de semana, avisando que sábado e domingo às 11h tem o resumo da economia dos EUA e do mundo"
+                if datetime.now(TZ).weekday() == 4 else "") + ". "
              "Use só as manchetes e números fornecidos.",
              "Mercados no dia:\n" + facts_text(qs) + "\n\nManchetes:\n" + "\n".join(f"- {h['title']}" for h in heads), 950)
     if not cap:
@@ -1239,21 +1244,82 @@ def slot_news(ch, ctx):
     return [{"album": paths, "cap": cap, "after": posted}]
 
 
+# ================================================================= weekend 11:00: US and world economy (carousel)
+ECON_FEEDS = ["https://news.google.com/rss/search?q=economia+(EUA+OR+%22Estados+Unidos%22+OR+Fed+OR+%22Wall+Street%22+OR+Treasury)"
+              "+when:2d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+              "https://news.google.com/rss/search?q=(%22economia+global%22+OR+%22economia+mundial%22+OR+China+OR+BCE+OR+FMI+OR+tarifas"
+              "+OR+petr%C3%B3leo)+economia+when:2d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
+              "https://br.investing.com/rss/news_1.rss"]
+ECON_TOPICS = [  # US and world only: Brazil-only stories (Copom, Selic, Ibovespa) are left out
+    ("EUA", r"\bFED\b|WALL STREET|S&P|NASDAQ|DOW JONES|TREASUR|PAYROLL|EUA\b|ESTADOS UNIDOS|AMERICAN|POWELL|TRUMP|CASA BRANCA", "SPX"),
+    ("CHINA", r"CHINA|CHIN[ÊE]S|PEQUIM|XI JINPING", None), ("EUROPA", r"EUROPA|EUROPE|\bBCE\b|ZONA DO EURO|\bEURO\b|ALEMANHA", "EURUSD"),
+    ("JAPÃO", r"JAP[ÃA]O|\bBOJ\b|IENE", "USDJPY"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
+    ("OURO", r"\bOURO\b", "XAUUSD"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"),
+    ("MUNDO", r"\bFMI\b|BANCO MUNDIAL|ECONOMIA (GLOBAL|MUNDIAL)|TARIFA|COM[ÉE]RCIO (GLOBAL|MUNDIAL|EXTERIOR)|G20|G7\b", None)]
+ECON_DOMESTIC = r"IBOVESPA|\bB3\b|R\$|COPOM|SELIC|IPCA|HADDAD|TESOURO DIRETO"   # Brazil-only market stories
+TAG_COL.update({"CHINA": "#F0506E", "EUROPA": "#5B8CFF", "JAPÃO": "#F0506E", "MUNDO": "#B07CF0"})
+ECON_OPEN = ["🌎 Economia dos EUA e do mundo", "🌎 O que movimenta a economia global", "🇺🇸 Economia: EUA e mundo"]
+ECON_CLOSE = ["Bom fim de semana a todos.", "Ótimo fim de semana. Segunda às 9h voltamos com os mercados.",
+              "Bom descanso e até segunda."]
+
+
+def slot_econ(ch, ctx):
+    """Weekend 11:00: the main US and world economy stories of the last two days. Stories already used in a
+    carousel are skipped (rule 1); market panels show the last session's change (crypto trades at the weekend)."""
+    qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
+    seen = ctx["d"].setdefault("news_seen", {})
+    items = [h for h in news(48, ECON_FEEDS, ECON_TOPICS) if h["tag"] and not re.search(ECON_DOMESTIC, h["title"].upper())]
+    heads = pick_news(items, seen=seen)
+    if not heads:
+        print("  no new US/world economy stories: nothing to post"); return []
+    blurbs = {}
+    raw = ai("Para cada manchete numerada, escreva UMA frase curta (até 140 caracteres) explicando o que ela significa para a "
+             "economia e os mercados, sem acrescentar fatos que não estejam na manchete. Responda no formato 'N: frase', uma por linha.",
+             "\n".join(f"{i + 1}: {h['title']}" for i, h in enumerate(heads)), 900, emoji=False)
+    for line in (raw or "").splitlines():
+        m = re.match(r"\W*(\d+)\s*[:.)-]\s*(.+)", line)
+        if m:
+            blurbs[int(m.group(1))] = re.sub(r"\s+", " ", re.sub(r"[\U0001F000-\U0001FAFF\u2190-\u2BFF\ufe0f\u200d]", "", m.group(2))).strip()
+    paths = [news_cover(heads, qs, "Economia: EUA e mundo", "o que movimenta a economia global")]
+    paths += [news_slide(i + 1, len(heads), h, qs, blurbs.get(i + 1)) for i, h in enumerate(heads)]
+    cap = ai("Escreva o resumo de fim de semana da economia dos EUA e do mundo para o canal, em tom respeitoso e sóbrio: uma linha "
+             "de abertura, 4 ou 5 tópicos curtos (um por linha, começando com •) com o que mais importa, e uma linha final desejando "
+             "bom fim de semana. Use só as manchetes fornecidas.",
+             "Manchetes:\n" + "\n".join(f"- {h['title']}" for h in heads), 950)
+    if not cap:
+        bullets = "\n".join(f"• {h['title']}" for h in heads)
+        cap = f"{pick(ECON_OPEN)}\n\n{bullets}\n\n{pick(ECON_CLOSE)}"
+        while len(cap) > 1000 and bullets.count("\n"):
+            bullets = bullets.rsplit("\n", 1)[0]
+            cap = f"{pick(ECON_OPEN)}\n\n{bullets}\n\n{pick(ECON_CLOSE)}"
+    def posted():
+        for h in heads:
+            seen[news_key(h["title"])] = time.time()
+    return [{"album": paths, "cap": cap, "after": posted}]
+
+
 # ================================================================= runner
 SLOTS = {9: ("morning", slot_morning), 11: ("overview", slot_overview), 13: ("signal", slot_signal),
          15: ("poll", slot_poll), 19: ("signal", slot_signal), 21: ("news", slot_news)}
+WEEKEND_SLOTS = {11: ("econ", slot_econ)}             # Sat/Sun; the rest of the weekend is posted by hand
+
+
+def slots_today(now=None):
+    return WEEKEND_SLOTS if slots.weekend(now or datetime.now(TZ)) else SLOTS
 
 
 def run(hour, live):
-    if hour not in SLOTS:
-        print(f"  {hour:02d}:00 {S.TZ_LABEL}: no automatic post (17:00 is manual)"); return
-    kind, fn = SLOTS[hour]
+    table = slots_today()
+    if hour not in table:
+        print(f"  {hour:02d}:00 {S.TZ_LABEL}: no automatic post today (posted by hand)"); return
+    kind, fn = table[hour]
     print(f"  {hour:02d}:00 {S.TZ_LABEL} · {kind}{'' if live else ' (dry-run)'}")
     d, st = load()
     basis = S.gold_basis(None)
     try:
         for ch in S.load_channels():
-            if ch.get("slots") is not None and hour not in ch["slots"]:
+            enabled = ch.get("weekend_slots" if table is WEEKEND_SLOTS else "slots")
+            if enabled is not None and hour not in enabled:
                 print(f"  {ch['chat']}: slot {hour} not enabled in channels.json"); continue
             S.use_branding(ch)
             cd = d.setdefault(str(ch["chat"]), {})
@@ -1303,7 +1369,7 @@ def run(hour, live):
                 day[str(hour)] = dict(kind=kind, sent=sent, failed=len(S.FAILURES) > failed_before, t=time.time())
                 for k in [k for k in cd["log"] if k < (datetime.now(TZ) - timedelta(days=10)).strftime("%Y-%m-%d")]:
                     del cd["log"][k]
-                if hour == max(slots.SLOT_HOURS):          # after the last slot: the owner's end-of-day report
+                if table is SLOTS and hour == max(slots.SLOT_HOURS):   # after the last weekday slot: the owner's end-of-day report
                     safe_report(ch, ctx, day_report(ch, cd), to_issue=False)
         if live and not S.FAILURES:                      # later cron attempts for this slot will skip it
             done = st.setdefault("_done", {})

@@ -15,11 +15,12 @@ These rules override everything else in this repository. Any change must keep th
    - `owner_username` is private config, used only to recognise the owner's messages to the bot. It is never posted.
    - Poll reports and alerts go only to the owner by private message and to this private repository.
 3. **Never stop posting until the owner says so.**
-   - Two independent timers start every slot: GitHub's schedule (:00, :20, :40) and the Claude backup timer (:02).
+   - Two independent timers start every slot: GitHub's schedule (:07, :27, :47) and the Claude backup timer (:02).
    - A missed slot is caught up within 90 minutes. Errors in one step (bot check, reports, updates, memory) never block the post.
    - Formatting (bold, animated emoji) never blocks a post: if Telegram rejects it or it fails, the same text goes out plain.
    - A signal slot is never left empty: with no new signal or result, it posts a market panorama of an asset not covered yet that day.
    - Failures alert the owner by Telegram DM and a GitHub issue. Scheduled runs keep the workflow enabled.
    - Only the owner pauses posting (Actions → Disable workflow, and the backup timer in Claude → Routines).
 4. **Keep the schedule.** Monday–Friday, Brazil time (America/Sao_Paulo): 09:00, 11:00, 13:00, 15:00, 19:00, 21:00.
-   17:00 is posted by hand by the owner.
+   17:00 is posted by hand by the owner. Saturday and Sunday: 11:00 US and world economy news; the owner posts the rest
+   of the weekend (09:00, 13:00, 15:00, 17:00, 19:00) by hand.
