@@ -571,7 +571,15 @@ def poll_options(d):
     return ranked[:2] + rest[:2]
 
 
-POLL_Q = ["📊 Qual ativo você quer que eu analise amanhã às 11h?",
+POLL_Q = ["🎯 Qual mercado merece a análise de amanhã às 11h?",            # used in turn, one per poll (rule 1)
+          "👀 De olho em qual ativo? O mais votado ganha análise amanhã às 11h.",
+          "📊 Vote no ativo que eu devo analisar amanhã às 11h.",
+          "💡 Qual ativo você quer entender melhor? Análise do mais votado amanhã às 11h.",
+          "🔍 Me diga: qual ativo eu destrincho amanhã às 11h?",
+          "📈 Qual desses ativos você está acompanhando? O vencedor ganha análise amanhã às 11h.",
+          "🎯 Escolha o ativo da análise de amanhã, às 11h.",
+          "👀 Enquete do dia: qual gráfico você quer ver amanhã às 11h?",
+          "📊 Qual ativo você quer que eu analise amanhã às 11h?",
           "🗳 Você escolhe: qual ativo ganha análise completa amanhã às 11h?",
           "📈 Amanhã às 11h eu analiso o mais votado. Qual vai ser?",
           "🔍 Qual gráfico você quer ver destrinchado amanhã às 11h?"]
@@ -580,10 +588,11 @@ POLL_Q = ["📊 Qual ativo você quer que eu analise amanhã às 11h?",
 def slot_poll(ch, ctx):
     d = ctx["d"]
     close_poll(ch, ctx, late=True)
-    q = pick(POLL_Q)
+    i = d.get("poll_q_i", 0) % len(POLL_Q)                  # next question in turn: no repeat for 12 polls
+    q = POLL_Q[i]
     if datetime.now(TZ).weekday() == 4:                      # Friday: the next 11:00 run is on Monday
-        q = q.replace("amanhã", "segunda-feira").replace("Amanhã", "Segunda-feira")
-    return [{"poll": dict(question=q, keys=poll_options(d))}]
+        q = q.replace("de amanhã", "de segunda-feira").replace("amanhã", "na segunda-feira").replace("Amanhã", "Na segunda-feira")
+    return [{"poll": dict(question=q, keys=poll_options(d), q_next=i + 1)}]
 
 
 def poll_text(question, opts, fmt):
@@ -606,6 +615,8 @@ def send_poll(ch, spec, ctx):
     print(f"  → {ch['chat']} poll: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
     ctx["sent_poll"] = j
     if j.get("ok"):
+        if "q_next" in spec:
+            ctx["d"]["poll_q_i"] = spec["q_next"]
         ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time(),
                                      poll_id=j["result"].get("poll", {}).get("id"))
     else:
