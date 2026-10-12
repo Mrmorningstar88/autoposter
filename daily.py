@@ -992,7 +992,10 @@ def followup_post(ch, ctx):
             if ctx["live"]:
                 sig["followed"] = True
             continue
-        p, cap = result_card(ch, sig, st_, basis)
+        try:
+            p, cap = result_card(ch, sig, st_, basis)
+        except Exception as e:                             # a broken result card must not cost the slot its post
+            print(f"  ! result card failed for {sig['key']}: {e}"); continue
         return (p, cap, {"after": lambda sig=sig: sig.update(followed=True)})
     return None
 
@@ -1008,7 +1011,7 @@ def result_card(ch, sig, status, basis):
     label, col = {"TP2": ("TP2 ATINGIDO", C["buy"]), "TP1": ("TP1 ATINGIDO", C["buy"]),
                   "BE": ("TP1 + SAÍDA NO ZERO", C["buy"]), "SL": ("STOP ATINGIDO", C["sell"])}[status]
     before = S.load_tf(tk, "15m") - basis
-    start = datetime.fromtimestamp(sig["ts"], TZ)
+    start = datetime.fromtimestamp(int(sig["ts"]), TZ)    # whole seconds: candle times have no sub-second unit
     view = before[before.index >= start - timedelta(hours=8)].iloc[-90:]
     n = len(view)
     t0 = int(view.index.searchsorted(start))
