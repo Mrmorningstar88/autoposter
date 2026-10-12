@@ -632,7 +632,8 @@ def slot_overview(ch, ctx):
         d.setdefault("covered", {})[f"{datetime.now(TZ):%Y-%m-%d}:11"] = focus
         if voted:
             voted["reviewed"] = True
-    intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({voted['counts'][focus]} votos). Aqui está a análise.\n\n" if voted else ""
+    n = voted["counts"][focus] if voted else 0
+    intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({n} {'voto' if n == 1 else 'votos'}). Aqui está a análise.\n\n" if voted else ""
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
              f"e como os ativos relacionados se moveram. Termine com o que observar no dia.", facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
