@@ -309,6 +309,16 @@ def recent_texts(ch):
     return _RECENT[handle]
 
 
+def fresh(ch, keyword=None, n=3):
+    """Rule 1 for AI copy: the latest channel posts (optionally only those containing keyword), for the AI to avoid."""
+    try:
+        recent = [t[:400] for t in recent_texts(ch) if not keyword or keyword in t][-n:]
+    except Exception:
+        recent = []
+    return ("\nNão repita frases, aberturas nem fechamentos destes posts recentes do canal; escreva com outras palavras:\n"
+            + "\n---\n".join(recent)) if recent else ""
+
+
 def already_in_channel(ch, cap):
     """True when the caption's opening (first 3 non-empty lines) already appears in a recent post."""
     head = [re.sub(r"\s+", " ", l).strip() for l in cap.splitlines() if l.strip()][:3]
@@ -494,13 +504,8 @@ MORNING_THEMES = ["paciência para esperar o setup certo", "aceitar perdas peque
 def slot_morning(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
     p = market_card(qs, "Bom dia, traders", "morning.png")
-    try:                                                     # rule 1: the day's tip must not echo recent mornings
-        recent = [t[:400] for t in recent_texts(ch) if "Bom dia" in t][-3:]
-    except Exception:
-        recent = []
     cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
-             f"e uma frase curta e original sobre o tema do dia: {pick(MORNING_THEMES)}."
-             + ("\nNão repita frases, aberturas nem dicas destes posts recentes do canal:\n" + "\n---\n".join(recent) if recent else ""),
+             f"e uma frase curta e original sobre o tema do dia: {pick(MORNING_THEMES)}." + fresh(ch, "Bom dia"),
              facts_text(qs), 700)
     cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
@@ -659,7 +664,7 @@ def slot_overview(ch, ctx):
     n = voted["counts"][focus] if voted else 0
     intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({n} {'voto' if n == 1 else 'votos'}). Aqui está a análise.\n\n" if voted else ""
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
-             f"e como os ativos relacionados se moveram. Termine com o que observar no dia.", facts, 800 - len(intro))
+             f"e como os ativos relacionados se moveram. Termine com o que observar no dia." + fresh(ch), facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
     return [(p, cap, {"after": posted})]
 
@@ -919,7 +924,7 @@ def panorama_item(ch, ctx):
     focus = max(cand, key=lambda k: abs(qs[k]["chg"]))
     p, facts = overview_card(focus, qs, ctx["basis"])
     cap = ai(f"Escreva um panorama curto de {A[focus]['label']} para agora: tendência, níveis principais e o que esperar "
-             f"nas próximas horas. Comece dizendo que não há entrada limpa neste momento.", facts, 750)
+             f"nas próximas horas. Comece dizendo que não há entrada limpa neste momento." + fresh(ch), facts, 750)
     cap = cap or f"{pick(PANORAMA_OPEN)}\n\n" + template_overview(focus, facts)
     h = hook(ch)
     if h:
@@ -1256,7 +1261,7 @@ def slot_news(ch, ctx):
              "curtos (um por linha, começando com •) com o que mais importou, e uma linha final desejando boa noite"
              + (" e bom fim de semana, avisando que sábado e domingo às 11h tem o resumo da economia dos EUA e do mundo"
                 if datetime.now(TZ).weekday() == 4 else "") + ". "
-             "Use só as manchetes e números fornecidos.",
+             "Use só as manchetes e números fornecidos." + fresh(ch),
              "Mercados no dia:\n" + facts_text(qs) + "\n\nManchetes:\n" + "\n".join(f"- {h['title']}" for h in heads), 950)
     if not cap:
         bullets = "\n".join(f"• {h['title']}" for h in heads)
@@ -1312,7 +1317,7 @@ def slot_econ(ch, ctx):
     paths += [news_slide(i + 1, len(heads), h, qs, blurbs.get(i + 1)) for i, h in enumerate(heads)]
     cap = ai("Escreva o resumo de fim de semana da economia dos EUA e do mundo para o canal, em tom respeitoso e sóbrio: uma linha "
              "de abertura, 4 ou 5 tópicos curtos (um por linha, começando com •) com o que mais importa, e uma linha final desejando "
-             "bom fim de semana. Use só as manchetes fornecidas.",
+             "bom fim de semana. Use só as manchetes fornecidas." + fresh(ch),
              "Manchetes:\n" + "\n".join(f"- {h['title']}" for h in heads), 950)
     if not cap:
         bullets = "\n".join(f"• {h['title']}" for h in heads)
