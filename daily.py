@@ -484,11 +484,24 @@ MORNING = ["☀️ Bom dia, traders!\n\nDestaques desta manhã:\n{m}\n\nPlano de
            "🌅 Bom dia, pessoal!\n\nO que se moveu desde ontem:\n{m}\n\nOpere o plano, não a emoção. Bom dia de trades!",
            "☕ Bom dia, traders!\n\nPanorama da manhã:\n{m}\n\nStop sempre definido antes da entrada. Bora pro dia! 💪",
            "☀️ Bom dia!\n\nOs números de abertura:\n{m}\n\nMenos operações, mais qualidade. Excelente dia a todos."]
+MORNING_THEMES = ["paciência para esperar o setup certo", "aceitar perdas pequenas como parte do jogo",
+                  "não operar por impulso ou por tédio", "seguir o plano de trading definido antes do pregão",
+                  "conferir o calendário econômico antes de operar", "registrar cada operação num diário de trading",
+                  "proteger o capital acima de tudo", "controlar as emoções depois de um gain ou de um loss",
+                  "qualidade acima de quantidade de operações", "respeitar o tamanho da posição"]
+
+
 def slot_morning(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
     p = market_card(qs, "Bom dia, traders", "morning.png")
+    try:                                                     # rule 1: the day's tip must not echo recent mornings
+        recent = [t[:400] for t in recent_texts(ch) if "Bom dia" in t][-3:]
+    except Exception:
+        recent = []
     cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
-             "e uma frase sobre disciplina ou gestão de risco para o dia.", facts_text(qs), 700)
+             f"e uma frase curta e original sobre o tema do dia: {pick(MORNING_THEMES)}."
+             + ("\nNão repita frases, aberturas nem dicas destes posts recentes do canal:\n" + "\n---\n".join(recent) if recent else ""),
+             facts_text(qs), 700)
     cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
 
