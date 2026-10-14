@@ -175,10 +175,13 @@ ICON = {k: (EMO.get("assets", {}).get(k) or {}).get("alt") or v for k, v in ICON
 BULLET = (EMO.get("bullet") or {}).get("alt") or "•"
 UP, DOWN = "📈", "📉"
 _ICON_LIST = ", ".join(f"{A[k]['label']} {ICON[k]}" for k in ICON)
-TONE = "☀️ 🌙 📊 🎯 ⚠️ 🔔 🔥 💡 🚀 🏦 ⚖️ 💼 🐂 🐻 ✨ 📌 📍 🗓 ⌛ 👀 💪 🤝 🙏"
+TONE = ("☀️ (manhã), 🌙 (noite), 📊 (dados), 🎯 (alvo, objetivo), ⚠️ (risco, alerta), 🔔 (aviso), 🔥 (movimento forte), "
+        "💡 (dica), 🚀 (alta forte), 🏦 (bancos centrais), ⚖️ (decisão, equilíbrio), 💼 (empresas), 🐂 (mercado comprador), "
+        "🐻 (mercado vendedor), 📌 (ponto importante), 🗓 (agenda), ⌛ (paciência, tempo), 👀 (atenção), 💪 (disciplina), "
+        "🙏 (agradecimento)")
 EMOJI_USE = (f"Use emojis com significado, como num post profissional: comece cada linha que fala de um ativo com o ícone "
              f"dele ({_ICON_LIST}); use {UP} para alta e {DOWN} para queda; fora isso, no máximo 2 emojis de tom, "
-             f"escolhidos desta lista: {TONE}. Para listas, comece cada item com •.")
+             f"escolhidos desta lista e usados só no sentido indicado: {TONE}. Para listas, comece cada item com •.")
 EMOJI_STATS = {"sent": 0, "kept": 0}                 # animated emoji sent in this run / kept by Telegram
 
 
@@ -505,7 +508,8 @@ def slot_morning(ch, ctx):
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
     p = market_card(qs, "Bom dia, traders", "morning.png")
     cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
-             f"e uma frase curta e original sobre o tema do dia: {pick(MORNING_THEMES)}." + fresh(ch, "Bom dia"),
+             f"e uma frase curta e original sobre {pick(MORNING_THEMES)} (sem escrever rótulos como 'tema do dia')."
+             + fresh(ch, "Bom dia"),
              facts_text(qs), 700)
     cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
