@@ -123,13 +123,24 @@ VOICE = ("Você escreve posts de Telegram para Gabriel Santos, trader brasileiro
          "Responda só com o texto do post, sem aspas, sem markdown (sem ** nem #).")
 
 
+def day_note():
+    """Today's weekday for the AI, so greetings and sign-offs fit the day (no 'boa semana' on a Thursday)."""
+    now = datetime.now(TZ)
+    wd = now.weekday()
+    fit = ("Pode desejar uma boa semana." if wd == 0 else
+           "Não deseje 'boa semana'; se for o caso, deseje um bom fim de semana." if wd >= 4 else
+           "Não deseje 'boa semana' nem 'bom fim de semana'.")
+    return f"Hoje é {WEEKDAYS[wd].lower()}{'' if wd >= 5 else '-feira'}, {now:%d/%m}. {fit}"
+
+
 def ai(task, facts, max_chars, emoji=True):
     if not os.getenv("ANTHROPIC_API_KEY"):
         return None
     try:
         import anthropic
         r = anthropic.Anthropic().beta.messages.create(
-            model=AI_MODEL, max_tokens=4000, system=f"{VOICE} {EMOJI_USE if emoji else 'Não use emojis.'}", betas=["server-side-fallback-2026-07-01"],
+            model=AI_MODEL, max_tokens=4000, system=f"{VOICE} {day_note()} {EMOJI_USE if emoji else 'Não use emojis.'}",
+            betas=["server-side-fallback-2026-07-01"],
             extra_body={"fallbacks": "default", "output_config": {"effort": "low"}},
             messages=[{"role": "user", "content": f"{task}\nLimite: {max_chars} caracteres.\n\nDados:\n{facts}"}])
         if r.stop_reason == "refusal":
