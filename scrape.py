@@ -1005,10 +1005,11 @@ def spot_ticks(hour, deadline=None):
     [] when the hour has no ticks or can't be fetched (by `deadline`, a time.time() value)."""
     url = (f"https://datafeed.dukascopy.com/datafeed/XAUUSD/{hour:%Y}/{hour.month - 1:02d}/{hour:%d}/{hour:%H}h_ticks.bi5")
     for i in range(3):
-        if deadline and time.time() > deadline:
+        left = (deadline - time.time()) if deadline else 10
+        if left <= 1:
             return []
         try:
-            r = requests.get(url, headers=UA, timeout=10)
+            r = requests.get(url, headers=UA, timeout=(min(5, left), min(10, left)))
             if r.status_code == 404:
                 return []
             r.raise_for_status()
@@ -1019,19 +1020,24 @@ def spot_ticks(hour, deadline=None):
                 out.append((hour + timedelta(milliseconds=ms), (ask + bid) / 2000))
             return out if out and 1000 < out[-1][1] < 20000 else []
         except Exception:
-            time.sleep(i + 1)
+            if i < 2 and (not deadline or time.time() + i + 1 < deadline):
+                time.sleep(i + 1)
     return []
 
 
 def spot_basis(fut=None, now=None):
     """Gold futures (GC=F) minus spot, measured: 15-minute futures closes against spot ticks at the same moments, over the
-    latest trading hours Dukascopy has published. None when fewer than 4 moments line up. Gives up after 40 seconds so a
-    slow feed never holds a post back."""
+    latest trading session Dukascopy has published. None when fewer than 4 moments line up, or when they disagree by more
+    than $3 (e.g. across a futures contract roll). Gives up after about 40 seconds so a slow feed never holds a post back."""
+    deadline = time.time() + 40
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     fut = load_tf("GC=F", "15m") if fut is None else fut
-    closes = {ts.tz_convert("UTC").to_pydatetime() + timedelta(minutes=15): float(c) for ts, c in fut["Close"].items()}
-    diffs, h, fetched, deadline = [], now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1), 0, time.time() + 40
+    closes = {ts.tz_convert("UTC").to_pydatetime() + timedelta(minutes=15): float(c)    # newest Yahoo bar may still be forming
+              for ts, c in fut["Close"].iloc[:-1].items()}
+    diffs, h, fetched = [], now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1), 0
     while len(diffs) < 8 and fetched < 6 and h > now - timedelta(days=4) and time.time() < deadline:
+        if not gold_open(h) and len(diffs) >= 4:          # one session only: never mix two futures contracts
+            break
         if gold_open(h):
             fetched += 1
             ticks = spot_ticks(h, deadline)
@@ -1042,13 +1048,19 @@ def spot_basis(fut=None, now=None):
                 if end in closes and i >= 0 and end - times[i] <= timedelta(minutes=2):
                     diffs.append(closes[end] - ticks[i][1])
         h -= timedelta(hours=1)
-    return round(st.median(diffs), 2) if len(diffs) >= 4 else None
+    if len(diffs) < 4 or max(diffs) - min(diffs) > 3:
+        return None
+    return round(st.median(diffs), 2)
 
 
 def gold_basis(rows=None, last=None):
-    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured against spot ticks; else `last` (the previous
-    measured value, passed in by the caller); else estimated from recent channel signals; else 28."""
+    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured against spot ticks; else `last` (default: the value
+    measured in the last 4 days, kept in memory as "_gold_basis" by daily.run); else estimated from recent channel signals;
+    else 28."""
     global BASIS_SRC
+    if last is None:
+        gb = _state().get("_gold_basis") or {}
+        last = gb.get("b") if time.time() - gb.get("t", 0) < 4 * 86400 else None
     if os.getenv("GOLD_BASIS"):
         BASIS_SRC = "env"
         return float(os.getenv("GOLD_BASIS"))

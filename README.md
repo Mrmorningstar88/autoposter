@@ -34,6 +34,14 @@ See **RULES.md** for the owner's rule book (no repeats, no personal info, never 
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.
 6. **Emoji**: every asset line starts with its icon (🥇 Ouro, 🥈 Prata, 🇪🇺 EUR/USD, 🇬🇧 GBP/USD, 🇯🇵 USD/JPY, 💵 Dólar, 💰 Bitcoin, 🛢 Petróleo, 🇺🇸 S&P 500, 🇧🇷 Ibovespa), with 📈/📉 for direction, a bold title and bold labels. `emoji.json` maps these emoji to animated (custom) ones from Telegram packs. Telegram shows animated emoji in a channel only when the bot has a collectible username bought on Fragment and assigned to it. Until then readers see the ordinary emoji in the same places, and the daily report says which one is showing. Run the workflow in `emoji` mode to list packs (numbered sheets in the run's `charts` artifact) when you want to change an emoji.
 
+## Gold prices
+
+Charts use gold futures (GC=F) and the posts show spot gold, so every run measures the gap between the two: the median
+difference between 15-minute futures closes and Dukascopy spot ticks over the latest trading session (about $21 in
+October 2026). If the spot feed can't be reached, the last value measured in the previous 4 days is used. Each gold signal
+keeps the gap it was posted with, so its result and the repeat check judge it on the same prices. To force a value, set
+the `GOLD_BASIS` environment variable.
+
 ## When something breaks
 
 A failed run opens (or comments on) a GitHub issue labelled `autoposter-alert`, which GitHub emails to you, and sends a Telegram DM if `OWNER_CHAT_ID` is set. Scheduled runs also re-enable the workflow so GitHub never pauses it for inactivity.

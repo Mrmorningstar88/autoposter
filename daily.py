@@ -892,7 +892,7 @@ def slot_signal(ch, ctx):
         if ch["markets"] is not None and s["name"] not in ch["markets"] and s["name"] not in [m for m, *_ in S.EXTRA_MARKETS]:
             continue
         item = signal_post(ch, ctx, s, source=True)
-        if item and seen_setup(d, s["name"], item[2]["signal"]):
+        if item and seen_setup(d, s["name"], item[2]["signal"], ctx):
             print(f"  · source signal {item[2]['signal']['key']} was already posted: skipped")
             if ctx["live"]:
                 s["posted"] = True
@@ -909,18 +909,31 @@ def slot_signal(ch, ctx):
     for name in sorted(ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"], key=lambda m: -pref.get(m, 0)):
         for tf in ("15m", "1h") if name == "XAUUSD" else ("1h",):
             p, c, res = S.render_entry_chart(name, tf, 70, ctx["basis"] if name == "XAUUSD" else 0.0)
-            if res["plan"] and not seen_setup(d, name, res["plan"]):
+            if res["plan"] and not seen_setup(d, name, res["plan"], ctx):
                 return [finish_signal(ch, ctx, name, tf, res["plan"], p, c, "own")]
     # 4. never leave the slot empty: a market panorama of an asset not covered yet today
     print("  no fresh signal, no result to show and no new setup: posting a market panorama")
     return [panorama_item(ch, ctx)]
 
 
-def seen_setup(d, name, plan, hours=24):
-    """Rule 1: same instrument and side with an entry within 0.15% of a signal posted in the last day is a repeat."""
+OLD_GOLD_BASIS = 28.0                                     # the fixed gold offset used before it was measured
+
+
+def sig_basis(sig, ctx):
+    """The gold futures-spot offset a stored signal's levels belong to. Our own setups were drawn on futures minus the
+    offset of that day; source-channel levels are real spot, so they take today's offset. 0 for other markets."""
+    if sig["name"] != "XAUUSD":
+        return 0.0
+    return sig.get("basis", OLD_GOLD_BASIS) if sig.get("origin") == "own" else ctx["basis"]
+
+
+def seen_setup(d, name, plan, ctx, hours=24):
+    """Rule 1: same instrument and side with an entry within 0.15% of a signal posted in the last day is a repeat.
+    Gold entries are compared on today's offset, so a change in the offset never hides a repeat."""
+    now_basis = ctx["basis"] if name == "XAUUSD" else 0.0
     for x in d.get("signals", []):
         if (x["name"] == name and x["side"] == plan["side"] and time.time() - x["ts"] < hours * 3600
-                and abs(x["entry"] - plan["entry"]) / plan["entry"] < 0.0015):
+                and abs(x["entry"] + sig_basis(x, ctx) - now_basis - plan["entry"]) / plan["entry"] < 0.0015):
             return True
     return False
 
@@ -975,7 +988,8 @@ def finish_signal(ch, ctx, name, tf, plan, p, cap, origin):
     h = hook(ch)
     cap = cap.replace("\n\n⚠️", (f"\n\n{h}" if h else "") + "\n\n⚠️", 1)
     rec = dict(key=S.setup_key(name, plan), name=name, tf=tf, side=plan["side"], entry=plan["entry"], sl=plan["sl"],
-               tp1=plan["tp1"], tp2=plan["tp2"], at_market=bool(plan["at_market"]), ts=time.time(), origin=origin, followed=False)
+               tp1=plan["tp1"], tp2=plan["tp2"], at_market=bool(plan["at_market"]), ts=time.time(), origin=origin, followed=False,
+               basis=ctx["basis"] if name == "XAUUSD" else 0.0)
     return (p, cap, {"signal": rec})
 
 
@@ -1025,7 +1039,7 @@ def followup_post(ch, ctx):
             if ctx["live"]:
                 sig["followed"] = True
             continue
-        basis = ctx["basis"] if sig["name"] == "XAUUSD" else 0.0
+        basis = sig_basis(sig, ctx)
         try:
             st_, df = outcome(sig, basis)
         except Exception as e:
@@ -1363,8 +1377,7 @@ def run(hour, live):
     kind, fn = table[hour]
     print(f"  {hour:02d}:00 {S.TZ_LABEL} · {kind}{'' if live else ' (dry-run)'}")
     d, st = load()
-    gb = st.get("_gold_basis") or {}
-    basis = S.gold_basis(None, last=gb.get("b") if time.time() - gb.get("t", 0) < 14 * 86400 else None)
+    basis = S.gold_basis(None)
     if S.BASIS_SRC == "spot":
         st["_gold_basis"] = dict(b=basis, t=time.time())
     print(f"  gold futures-spot offset: {basis:.2f} ({S.BASIS_SRC})")
