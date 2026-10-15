@@ -1363,7 +1363,11 @@ def run(hour, live):
     kind, fn = table[hour]
     print(f"  {hour:02d}:00 {S.TZ_LABEL} · {kind}{'' if live else ' (dry-run)'}")
     d, st = load()
-    basis = S.gold_basis(None)
+    gb = st.get("_gold_basis") or {}
+    basis = S.gold_basis(None, last=gb.get("b") if time.time() - gb.get("t", 0) < 14 * 86400 else None)
+    if S.BASIS_SRC == "spot":
+        st["_gold_basis"] = dict(b=basis, t=time.time())
+    print(f"  gold futures-spot offset: {basis:.2f} ({S.BASIS_SRC})")
     try:
         for ch in S.load_channels():
             enabled = ch.get("weekend_slots" if table is WEEKEND_SLOTS else "slots")
