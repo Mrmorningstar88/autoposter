@@ -1007,12 +1007,12 @@ def spot_ticks(hour, deadline=None):
     [] when the hour has no ticks or can't be fetched (by `deadline`, a time.time() value)."""
     url = (f"https://datafeed.dukascopy.com/datafeed/XAUUSD/{hour:%Y}/{hour.month - 1:02d}/{hour:%d}/{hour:%H}h_ticks.bi5")
     global SPOT_NOTE
-    for i in range(3):
-        left = (deadline - time.time()) if deadline else 10
+    for i in range(2):
+        left = (deadline - time.time()) if deadline else 15
         if left <= 1:
             return []
         try:
-            r = requests.get(url, headers=UA, timeout=(min(5, left), min(10, left)))
+            r = requests.get(url, headers=UA, timeout=(min(5, left), min(15, left)))
             if r.status_code == 404:
                 return []
             r.raise_for_status()
@@ -1024,21 +1024,22 @@ def spot_ticks(hour, deadline=None):
             return out if out and 1000 < out[-1][1] < 20000 else []
         except Exception as e:
             SPOT_NOTE = f"{hour:%d %H}h: {type(e).__name__} {str(e)[:80]}"
-            if i < 2 and (not deadline or time.time() + i + 1 < deadline):
-                time.sleep(i + 1)
+            if i == 0 and (not deadline or time.time() + 1 < deadline):
+                time.sleep(1)
     return []
 
 
 def spot_basis(fut=None, now=None):
     """Gold futures (GC=F) minus spot, measured: 15-minute futures closes against spot ticks at the same moments, over the
-    latest trading session Dukascopy has published. None when fewer than 4 moments line up, or when they disagree by more
-    than $3 (e.g. across a futures contract roll). Gives up after about 25 seconds so a slow feed never holds a post back."""
-    deadline = time.time() + 25
+    latest trading session Dukascopy has published (the hour just ended is skipped: Dukascopy is slow to serve it).
+    None when fewer than 4 moments line up, or when they disagree by more
+    than $3 (e.g. across a futures contract roll). Gives up after about 30 seconds so a slow feed never holds a post back."""
+    deadline = time.time() + 30
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     fut = load_tf("GC=F", "15m") if fut is None else fut
     closes = {ts.tz_convert("UTC").to_pydatetime() + timedelta(minutes=15): float(c)    # newest Yahoo bar may still be forming
               for ts, c in fut["Close"].iloc[:-1].items()}
-    diffs, h, fetched = [], now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1), 0
+    diffs, h, fetched = [], now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2), 0
     while len(diffs) < 8 and fetched < 6 and h > now - timedelta(days=4) and time.time() < deadline:
         if not gold_open(h) and len(diffs) >= 4:          # one session only: never mix two futures contracts
             break
@@ -1093,8 +1094,8 @@ def sample_basis(samples, fut=None):
 
 
 def gold_basis(rows=None, last=None, samples=None):
-    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured against spot ticks; else measured from spot samples
-    saved by earlier runs (`samples`, default: memory "_gold_spot"); else `last` (default: the value measured in the last
+    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured from spot samples saved by earlier runs (`samples`,
+    default: memory "_gold_spot"); else measured against Dukascopy spot ticks; else `last` (default: the value measured in the last
     4 days, kept in memory as "_gold_basis" by daily.run); else estimated from recent channel signals; else the default."""
     global BASIS_SRC
     mem = _state() if last is None or samples is None else {}
@@ -1106,7 +1107,7 @@ def gold_basis(rows=None, last=None, samples=None):
     if os.getenv("GOLD_BASIS"):
         BASIS_SRC = "env"
         return float(os.getenv("GOLD_BASIS"))
-    for src, measure in (("spot ticks", spot_basis), ("spot samples", lambda: sample_basis(samples))):
+    for src, measure in (("spot samples", lambda: sample_basis(samples)), ("spot ticks", spot_basis)):
         try:
             b = measure()
             if b is not None and -10 < b < 80:
