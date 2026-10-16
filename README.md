@@ -36,9 +36,10 @@ See **RULES.md** for the owner's rule book (no repeats, no personal info, never 
 
 ## Gold prices
 
-Charts use gold futures (GC=F) and the posts show spot gold, so every run measures the gap between the two: the median
-difference between 15-minute futures closes and Dukascopy spot ticks over the latest trading session (about $21 in
-October 2026). If the spot feed can't be reached, the last value measured in the previous 4 days is used. Each gold signal
+Charts use gold futures (GC=F) and the posts show spot gold, so every run measures the gap between the two (about $21 in
+October 2026): first from Dukascopy spot ticks against 15-minute futures closes over the latest trading session; if that
+feed can't be reached, from the spot prices (gold-api.com) saved by earlier runs, each set against the futures minute bar
+of the same moment. If neither works, the last value measured in the previous 4 days is used. The run log shows which. Each gold signal
 keeps the gap it was posted with, so its result and the repeat check judge it on the same prices. To force a value, set
 the `GOLD_BASIS` environment variable.
 

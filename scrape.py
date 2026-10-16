@@ -605,7 +605,7 @@ def _load_tf(ticker, tf):
     if tf == "4h":
         df = load_tf(ticker, "1h_long")
         return df.resample("4h", offset="0h").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
-    interval, period = {"1h": ("1h", "30d"), "1h_long": ("1h", "120d"), "15m": ("15m", "10d")}[tf]
+    interval, period = {"1h": ("1h", "30d"), "1h_long": ("1h", "120d"), "15m": ("15m", "10d"), "1m": ("1m", "5d")}[tf]
     df = yf.download(ticker, period=period, interval=interval, progress=False, auto_adjust=False)
     if hasattr(df.columns, "levels"):
         df.columns = df.columns.get_level_values(0)
@@ -992,6 +992,8 @@ def analyst_caption(name, tf, res, dec, pip):
 
 NY = ZoneInfo("America/New_York")
 BASIS_SRC = ""                                       # where the last gold_basis() value came from (for the run log)
+SPOT_NOTE = ""                                       # why the last spot-tick download failed (for the run log)
+DEFAULT_GOLD_BASIS = 21.0                            # last resort only: GC=F (Dec 2026 contract) minus spot, October 2026
 
 
 def gold_open(t):
@@ -1004,6 +1006,7 @@ def spot_ticks(hour, deadline=None):
     """Spot gold (XAUUSD) ticks as (UTC time, mid) for the UTC hour starting at `hour`, from Dukascopy's free feed.
     [] when the hour has no ticks or can't be fetched (by `deadline`, a time.time() value)."""
     url = (f"https://datafeed.dukascopy.com/datafeed/XAUUSD/{hour:%Y}/{hour.month - 1:02d}/{hour:%d}/{hour:%H}h_ticks.bi5")
+    global SPOT_NOTE
     for i in range(3):
         left = (deadline - time.time()) if deadline else 10
         if left <= 1:
@@ -1019,7 +1022,8 @@ def spot_ticks(hour, deadline=None):
                 ms, ask, bid, _, _ = struct.unpack(">IIIff", raw[k:k + 20])
                 out.append((hour + timedelta(milliseconds=ms), (ask + bid) / 2000))
             return out if out and 1000 < out[-1][1] < 20000 else []
-        except Exception:
+        except Exception as e:
+            SPOT_NOTE = f"{hour:%d %H}h: {type(e).__name__} {str(e)[:80]}"
             if i < 2 and (not deadline or time.time() + i + 1 < deadline):
                 time.sleep(i + 1)
     return []
@@ -1028,8 +1032,8 @@ def spot_ticks(hour, deadline=None):
 def spot_basis(fut=None, now=None):
     """Gold futures (GC=F) minus spot, measured: 15-minute futures closes against spot ticks at the same moments, over the
     latest trading session Dukascopy has published. None when fewer than 4 moments line up, or when they disagree by more
-    than $3 (e.g. across a futures contract roll). Gives up after about 40 seconds so a slow feed never holds a post back."""
-    deadline = time.time() + 40
+    than $3 (e.g. across a futures contract roll). Gives up after about 25 seconds so a slow feed never holds a post back."""
+    deadline = time.time() + 25
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     fut = load_tf("GC=F", "15m") if fut is None else fut
     closes = {ts.tz_convert("UTC").to_pydatetime() + timedelta(minutes=15): float(c)    # newest Yahoo bar may still be forming
@@ -1049,28 +1053,67 @@ def spot_basis(fut=None, now=None):
                     diffs.append(closes[end] - ticks[i][1])
         h -= timedelta(hours=1)
     if len(diffs) < 4 or max(diffs) - min(diffs) > 3:
+        print(f"  · spot ticks: {len(diffs)} matches from {fetched} hours{'; last error ' + SPOT_NOTE if SPOT_NOTE else ''}")
         return None
     return round(st.median(diffs), 2)
 
 
-def gold_basis(rows=None, last=None):
-    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured against spot ticks; else `last` (default: the value
-    measured in the last 4 days, kept in memory as "_gold_basis" by daily.run); else estimated from recent channel signals;
-    else 28."""
+def spot_now():
+    """(unix time, price) of spot gold now from gold-api.com, or None. Saved by each run for sample_basis()."""
+    try:
+        j = requests.get("https://api.gold-api.com/price/XAU", headers=UA, timeout=(5, 10)).json()
+        t, p = datetime.fromisoformat(j["updatedAt"].replace("Z", "+00:00")).timestamp(), float(j["price"])
+        return (t, p) if 1000 < p < 20000 and abs(time.time() - t) < 600 else None
+    except Exception as e:
+        print(f"  ! spot gold price not read: {e}")
+        return None
+
+
+def sample_basis(samples, fut=None):
+    """Gold futures minus spot from the spot prices saved by earlier runs, each set against the GC=F 1-minute bar of
+    the same moment (Yahoo's futures arrive about 10 minutes late, so only earlier samples can be matched). Samples
+    far from the newest ones (a contract roll in between) are left out. None with fewer than 3 matches."""
+    fut = load_tf("GC=F", "1m") if fut is None else fut
+    starts = [t.tz_convert("UTC").to_pydatetime() for t in fut.index]
+    diffs = []
+    for t, p in sorted(samples or [], reverse=True):
+        when = datetime.fromtimestamp(t, timezone.utc)
+        i = bisect.bisect_right(starts, when) - 1
+        if i < 0 or i >= len(starts) - 1 or when - starts[i] >= timedelta(minutes=1):
+            continue                                  # no futures bar at that minute: market closed or not published yet
+        o, c = float(fut["Open"].iloc[i]), float(fut["Close"].iloc[i])
+        diffs.append(o + (c - o) * (when - starts[i]).total_seconds() / 60 - p)
+        if len(diffs) >= 8:
+            break
+    if len(diffs) < 3:
+        return None
+    anchor = st.median(diffs[:3])
+    keep = [x for x in diffs if abs(x - anchor) <= 2.5]
+    return round(st.median(keep), 2) if len(keep) >= 3 else None
+
+
+def gold_basis(rows=None, last=None, samples=None):
+    """Futures→spot offset for gold. GOLD_BASIS env wins; else measured against spot ticks; else measured from spot samples
+    saved by earlier runs (`samples`, default: memory "_gold_spot"); else `last` (default: the value measured in the last
+    4 days, kept in memory as "_gold_basis" by daily.run); else estimated from recent channel signals; else the default."""
     global BASIS_SRC
+    mem = _state() if last is None or samples is None else {}
     if last is None:
-        gb = _state().get("_gold_basis") or {}
+        gb = mem.get("_gold_basis") or {}
         last = gb.get("b") if time.time() - gb.get("t", 0) < 4 * 86400 else None
+    if samples is None:
+        samples = mem.get("_gold_spot") or []
     if os.getenv("GOLD_BASIS"):
         BASIS_SRC = "env"
         return float(os.getenv("GOLD_BASIS"))
-    try:
-        b = spot_basis()
-        if b is not None and -10 < b < 80:
-            BASIS_SRC = "spot"
-            return b
-    except Exception as e:
-        print(f"  ! gold spot offset not measured: {e}")
+    for src, measure in (("spot ticks", spot_basis), ("spot samples", lambda: sample_basis(samples))):
+        try:
+            b = measure()
+            if b is not None and -10 < b < 80:
+                BASIS_SRC = src
+                return b
+        except Exception as e:
+            print(f"  ! gold offset from {src} not measured: {e}")
     if last is not None:
         BASIS_SRC = "last measured"
         return float(last)
@@ -1082,7 +1125,7 @@ def gold_basis(rows=None, last=None):
     except Exception:
         pass
     BASIS_SRC = "default"
-    return 28.0
+    return DEFAULT_GOLD_BASIS
 
 
 def cmd_ta(rows=None):
