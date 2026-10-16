@@ -9,7 +9,7 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 | 13:00 | Trading signal from the source channel (only if it was posted in the last 90 min, during Brazilian daytime). If none: the result of an earlier signal. If none: our own chart setup. Every signal and result ends with the DM hook |
 | 15:00 | Native Telegram poll "which asset should I analyse tomorrow?". It closes at the next 11:00 run; the result is sent to you and decides the 11:00 asset |
 | 17:00 | Manual |
-| 19:00 | Same as 13:00 |
+| 19:00 | Same as 13:00. On Friday the market has closed by then, so no new entry: a result or a panorama |
 | 21:00 | News carousel (album): cover with the day's 5 stories, one slide per story with the market's reaction, market-close card; roundup text as caption |
 
 Saturday and Sunday (BRT):

@@ -23,6 +23,7 @@ import json, os, re, sys, time, random
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
 
 import requests
 import scrape as S
@@ -884,11 +885,24 @@ def tf_for(name):
     return "15m" if name in ("XAUUSD", "XAGUSD", "BTCUSD", "US30", "NAS100") else "1h"
 
 
+NY = ZoneInfo("America/New_York")
+
+
+def market_open(now=None):
+    """Forex and gold trade from Sunday 17:00 to Friday 17:00 New York time. A new entry posted while they are closed
+    (the Friday 19:00 slot) could not be taken before Monday's gap, so then no new setup is posted."""
+    ny = (now or datetime.now(TZ)).astimezone(NY)
+    return not (ny.weekday() == 5 or (ny.weekday() == 4 and ny.hour >= 17) or (ny.weekday() == 6 and ny.hour < 17))
+
+
 def slot_signal(ch, ctx):
     d = ctx["d"]
     now = time.time()
+    is_open = market_open()
+    if not is_open:
+        print("  market closed for the weekend: no new entries, only a result or a panorama")
     # 1. a fresh signal from the source channel, posted inside Brazilian daytime
-    for s in sorted(d.get("src", []), key=lambda s: -s["ts"]):
+    for s in sorted(d.get("src", []) if is_open else [], key=lambda s: -s["ts"]):
         brt = datetime.fromtimestamp(s["ts"], TZ)
         if s["posted"] or now - s["ts"] > FRESH_MIN * 60 or not 7 <= brt.hour < 23:
             continue
@@ -909,7 +923,7 @@ def slot_signal(ch, ctx):
         return [item]
     # 3. own setup from the chart engine
     pref = d.get("pref", {})
-    for name in sorted(ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"], key=lambda m: -pref.get(m, 0)):
+    for name in sorted((ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"]) if is_open else [], key=lambda m: -pref.get(m, 0)):
         for tf in ("15m", "1h") if name == "XAUUSD" else ("1h",):
             p, c, res = S.render_entry_chart(name, tf, 70, ctx["basis"] if name == "XAUUSD" else 0.0)
             if res["plan"] and not seen_setup(d, name, res["plan"], ctx):
