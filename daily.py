@@ -124,13 +124,16 @@ VOICE = ("Você escreve posts de Telegram para Gabriel Santos, trader brasileiro
 
 
 def day_note():
-    """Today's weekday for the AI, so greetings and sign-offs fit the day (no 'boa semana' on a Thursday)."""
+    """Today's weekday and time for the AI, so greetings and sign-offs fit (no 'boa semana' on a Thursday, no
+    'bom fim de semana' on Friday morning)."""
     now = datetime.now(TZ)
     wd = now.weekday()
     fit = ("Pode desejar uma boa semana." if wd == 0 else
+           "Não deseje 'boa semana' nem 'bom fim de semana' ainda: o dia de mercado continua (pode desejar uma boa sexta-feira)."
+           if wd == 4 and now.hour < 18 else
            "Não deseje 'boa semana'; se for o caso, deseje um bom fim de semana." if wd >= 4 else
            "Não deseje 'boa semana' nem 'bom fim de semana'.")
-    return f"Hoje é {WEEKDAYS[wd].lower()}{'' if wd >= 5 else '-feira'}, {now:%d/%m}. {fit}"
+    return f"Hoje é {WEEKDAYS[wd].lower()}{'' if wd >= 5 else '-feira'}, {now:%d/%m}, {now:%H}h. {fit}"
 
 
 def ai(task, facts, max_chars, emoji=True):

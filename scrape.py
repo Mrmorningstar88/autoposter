@@ -13,7 +13,7 @@ Forex channel automation pipeline (single file).
 
 Env for posting: TG_BOT_TOKEN (from @BotFather; bot must be admin of the channel), TG_CHANNEL (@yourchannel or -100id)
 """
-import bisect, json, lzma, os, re, struct, sys, time, glob, statistics as st
+import bisect, json, os, re, sys, time, glob, statistics as st
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -990,73 +990,8 @@ def analyst_caption(name, tf, res, dec, pip):
     return "\n".join(lines)
 
 
-NY = ZoneInfo("America/New_York")
 BASIS_SRC = ""                                       # where the last gold_basis() value came from (for the run log)
-SPOT_NOTE = ""                                       # why the last spot-tick download failed (for the run log)
 DEFAULT_GOLD_BASIS = 21.0                            # last resort only: GC=F (Dec 2026 contract) minus spot, October 2026
-
-
-def gold_open(t):
-    """Does spot gold trade in the hour starting at t? Closed Friday 17:00 to Sunday 18:00 New York time and 17:00-18:00 daily."""
-    ny = t.astimezone(NY)
-    return not (ny.hour == 17 or ny.weekday() == 5 or (ny.weekday() == 4 and ny.hour > 17) or (ny.weekday() == 6 and ny.hour < 18))
-
-
-def spot_ticks(hour, deadline=None):
-    """Spot gold (XAUUSD) ticks as (UTC time, mid) for the UTC hour starting at `hour`, from Dukascopy's free feed.
-    [] when the hour has no ticks or can't be fetched (by `deadline`, a time.time() value)."""
-    url = (f"https://datafeed.dukascopy.com/datafeed/XAUUSD/{hour:%Y}/{hour.month - 1:02d}/{hour:%d}/{hour:%H}h_ticks.bi5")
-    global SPOT_NOTE
-    for i in range(2):
-        left = (deadline - time.time()) if deadline else 15
-        if left <= 1:
-            return []
-        try:
-            r = requests.get(url, headers=UA, timeout=(min(5, left), min(15, left)))
-            if r.status_code == 404:
-                return []
-            r.raise_for_status()
-            raw = lzma.decompress(r.content) if r.content else b""
-            out = []
-            for k in range(0, len(raw) - 19, 20):          # 20-byte records: ms into the hour, ask, bid (in 0.001), volumes
-                ms, ask, bid, _, _ = struct.unpack(">IIIff", raw[k:k + 20])
-                out.append((hour + timedelta(milliseconds=ms), (ask + bid) / 2000))
-            return out if out and 1000 < out[-1][1] < 20000 else []
-        except Exception as e:
-            SPOT_NOTE = f"{hour:%d %H}h: {type(e).__name__} {str(e)[:80]}"
-            if i == 0 and (not deadline or time.time() + 1 < deadline):
-                time.sleep(1)
-    return []
-
-
-def spot_basis(fut=None, now=None):
-    """Gold futures (GC=F) minus spot, measured: 15-minute futures closes against spot ticks at the same moments, over the
-    latest trading session Dukascopy has published (the hour just ended is skipped: Dukascopy is slow to serve it).
-    None when fewer than 4 moments line up, or when they disagree by more
-    than $3 (e.g. across a futures contract roll). Gives up after about 30 seconds so a slow feed never holds a post back."""
-    deadline = time.time() + 30
-    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    fut = load_tf("GC=F", "15m") if fut is None else fut
-    closes = {ts.tz_convert("UTC").to_pydatetime() + timedelta(minutes=15): float(c)    # newest Yahoo bar may still be forming
-              for ts, c in fut["Close"].iloc[:-1].items()}
-    diffs, h, fetched = [], now.replace(minute=0, second=0, microsecond=0) - timedelta(hours=2), 0
-    while len(diffs) < 8 and fetched < 6 and h > now - timedelta(days=4) and time.time() < deadline:
-        if not gold_open(h) and len(diffs) >= 4:          # one session only: never mix two futures contracts
-            break
-        if gold_open(h):
-            fetched += 1
-            ticks = spot_ticks(h, deadline)
-            times = [t for t, _ in ticks]
-            for m in (15, 30, 45, 60):
-                end = h + timedelta(minutes=m)
-                i = bisect.bisect_right(times, end) - 1
-                if end in closes and i >= 0 and end - times[i] <= timedelta(minutes=2):
-                    diffs.append(closes[end] - ticks[i][1])
-        h -= timedelta(hours=1)
-    if len(diffs) < 4 or max(diffs) - min(diffs) > 3:
-        print(f"  · spot ticks: {len(diffs)} matches from {fetched} hours{'; last error ' + SPOT_NOTE if SPOT_NOTE else ''}")
-        return None
-    return round(st.median(diffs), 2)
 
 
 def spot_now():
@@ -1095,8 +1030,8 @@ def sample_basis(samples, fut=None):
 
 def gold_basis(rows=None, last=None, samples=None):
     """Futures→spot offset for gold. GOLD_BASIS env wins; else measured from spot samples saved by earlier runs (`samples`,
-    default: memory "_gold_spot"); else measured against Dukascopy spot ticks; else `last` (default: the value measured in the last
-    4 days, kept in memory as "_gold_basis" by daily.run); else estimated from recent channel signals; else the default."""
+    default: memory "_gold_spot"); else `last` (default: the value measured in the last 4 days, kept in memory as
+    "_gold_basis" by daily.run); else estimated from recent channel signals; else the default."""
     global BASIS_SRC
     mem = _state() if last is None or samples is None else {}
     if last is None:
@@ -1107,14 +1042,13 @@ def gold_basis(rows=None, last=None, samples=None):
     if os.getenv("GOLD_BASIS"):
         BASIS_SRC = "env"
         return float(os.getenv("GOLD_BASIS"))
-    for src, measure in (("spot samples", lambda: sample_basis(samples)), ("spot ticks", spot_basis)):
-        try:
-            b = measure()
-            if b is not None and -10 < b < 80:
-                BASIS_SRC = src
-                return b
-        except Exception as e:
-            print(f"  ! gold offset from {src} not measured: {e}")
+    try:
+        b = sample_basis(samples)
+        if b is not None and -10 < b < 80:
+            BASIS_SRC = "spot samples"
+            return b
+    except Exception as e:
+        print(f"  ! gold offset from spot samples not measured: {e}")
     if last is not None:
         BASIS_SRC = "last measured"
         return float(last)
