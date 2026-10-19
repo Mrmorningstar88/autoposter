@@ -1396,7 +1396,7 @@ def run(hour, live):
     print(f"  {hour:02d}:00 {S.TZ_LABEL} · {kind}{'' if live else ' (dry-run)'}")
     d, st = load()
     sample = S.spot_now()                                # spot gold now: later runs set it against the futures
-    st["_gold_spot"] = [x for x in st.get("_gold_spot", []) if time.time() - x[0] < 3 * 86400][-40:] + ([list(sample)] if sample else [])
+    st["_gold_spot"] = [x for x in st.get("_gold_spot", []) if time.time() - x[0] < 5 * 86400][-40:] + ([list(sample)] if sample else [])
     basis = S.gold_basis(None, samples=st["_gold_spot"])
     if S.BASIS_SRC.startswith("spot"):
         st["_gold_basis"] = dict(b=basis, t=time.time())
