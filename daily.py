@@ -134,7 +134,8 @@ def day_note():
            if wd == 4 and now.hour < 18 else
            "Não deseje 'boa semana'; se for o caso, deseje um bom fim de semana." if wd >= 4 else
            "Não deseje 'boa semana' nem 'bom fim de semana'.")
-    return f"Hoje é {WEEKDAYS[wd].lower()}{'' if wd >= 5 else '-feira'}, {now:%d/%m}, {now:%H}h. {fit}"
+    return (f"Hoje é {WEEKDAYS[wd].lower()}{'' if wd >= 5 else '-feira'}, {now:%d/%m}; agora são {now:%H}h "
+            f"(não escreva a hora no post). {fit}")
 
 
 def ai(task, facts, max_chars, emoji=True):
