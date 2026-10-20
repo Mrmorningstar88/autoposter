@@ -1024,17 +1024,29 @@ def finish_signal(ch, ctx, name, tf, plan, p, cap, origin):
 
 
 def outcome(sig, basis):
-    """Walk 15m candles since the post: (status, best price reached). status: open | TP1 | TP2 | SL | BE | expired."""
+    """Walk the candles since the post: (status, candles). status: open | TP1 | TP2 | SL | BE | expired.
+    1-minute candles when they reach back to the post (Yahoo keeps ~5 days), else 15-minute ones. Inside one candle the
+    order of the moves is unknown, so on the candle where a pending entry fills only the stop counts (a target touched
+    in it may have come before the fill)."""
     tk = next(t for n, t, *_ in S.TA_MARKETS + S.EXTRA_MARKETS if n == sig["name"])
-    df = S.load_tf(tk, "15m") - basis
-    df = df[df.index >= datetime.fromtimestamp(sig["ts"], TZ)]
+    start = datetime.fromtimestamp(int(sig["ts"]), TZ)
+    df = None
+    try:
+        m = S.load_tf(tk, "1m")
+        if len(m) and m.index[0] <= start:
+            df = m
+    except Exception as e:
+        print(f"  · no 1-minute data for {sig['name']} ({e}): judging on 15-minute candles")
+    df = (S.load_tf(tk, "15m") if df is None else df) - basis
+    df = df[df.index >= start]
     up = sig["side"] == "BUY"
     live, tp1 = sig["at_market"], False
     for hi, lo in zip(df["High"], df["Low"]):
         if not live:
             live = lo <= sig["entry"] <= hi
-            if not live:
-                continue
+            if live and ((lo <= sig["sl"]) if up else (hi >= sig["sl"])):
+                return "SL", df
+            continue
         stop = sig["entry"] if tp1 else sig["sl"]
         if (lo <= stop) if up else (hi >= stop):
             return ("BE" if tp1 else "SL"), df
