@@ -310,6 +310,12 @@ def tg_formatted(ch, method, build, files=None):
 
 # ---------------------------------------------------------------- telegram
 _RECENT = {}
+SENT_HISTORY = []                                     # this channel's last captions, from memory (longer than the public page)
+
+
+def remember_sent(cd, cap):
+    """Keep the caption for later avoid lists (Rule 1), the last 40 posts."""
+    cd["sent_texts"] = (cd.get("sent_texts", []) + [re.sub(r"\s+", " ", cap).strip()[:400]])[-40:]
 
 
 def recent_texts(ch):
@@ -329,9 +335,14 @@ def recent_texts(ch):
 
 
 def fresh(ch, keyword=None, n=3):
-    """Rule 1 for AI copy: the latest channel posts (optionally only those containing keyword), for the AI to avoid."""
+    """Rule 1 for AI copy: the latest posts (optionally only those containing keyword), for the AI to avoid. Uses the
+    channel's public page plus the captions kept in memory, so it reaches back further than the page's last ~20 posts."""
     try:
-        recent = [t[:400] for t in recent_texts(ch) if not keyword or keyword in t][-n:]
+        key = lambda t: re.sub(r"\W+", "", t)[:60]
+        page = recent_texts(ch)                                   # newest posts, in order
+        on_page = {key(t) for t in page}
+        pool = [t for t in SENT_HISTORY if key(t) not in on_page] + page   # older captions from memory first
+        recent = [t[:400] for t in pool if not keyword or keyword in t][-n:]
     except Exception:
         recent = []
     return ("\nNão repita frases, aberturas nem fechamentos destes posts recentes do canal; escreva com outras palavras:\n"
@@ -684,7 +695,8 @@ def slot_overview(ch, ctx):
     n = voted["counts"][focus] if voted else 0
     intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({n} {'voto' if n == 1 else 'votos'}). Aqui está a análise.\n\n" if voted else ""
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
-             f"e como os ativos relacionados se moveram. Termine com o que observar no dia." + fresh(ch), facts, 800 - len(intro))
+             f"e como os ativos relacionados se moveram. Termine com o que observar no dia."
+             + (fresh(ch, "Resist", n=4) or fresh(ch)), facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
     return [(p, cap, {"after": posted})]
 
@@ -1408,6 +1420,7 @@ def run(hour, live):
                 print(f"  {ch['chat']}: slot {hour} not enabled in channels.json"); continue
             S.use_branding(ch)
             cd = d.setdefault(str(ch["chat"]), {})
+            SENT_HISTORY[:] = cd.get("sent_texts", [])
             ctx = dict(d=cd, live=live, basis=basis, hour=hour)
             sent, failed_before = [], len(S.FAILURES)
             EMOJI_STATS.update(sent=0, kept=0)
@@ -1426,6 +1439,8 @@ def run(hour, live):
                         continue
                     if isinstance(it, dict) and "album" in it:
                         j = send_album(ch, it["album"], it["cap"], live, hour)
+                        if j.get("ok") and live:
+                            remember_sent(cd, it["cap"])
                         if j.get("ok") and live and it.get("after"):
                             it["after"]()
                         if j.get("ok") and live:
@@ -1434,6 +1449,7 @@ def run(hour, live):
                     path, cap, extra = (tuple(it) + ({},))[:3]
                     j = send_photo(ch, path, cap, live, hour)
                     if j.get("ok") and live:
+                        remember_sent(cd, cap)
                         sent.append(dict(what=next((l for l in cap.splitlines() if l.strip()), os.path.basename(path))[:90],
                                          id=first_id(j)))
                         if extra.get("after"):
