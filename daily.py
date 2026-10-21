@@ -315,7 +315,7 @@ SENT_HISTORY = []                                     # this channel's last capt
 
 def remember_sent(cd, cap):
     """Keep the caption for later avoid lists (Rule 1), the last 40 posts."""
-    cd["sent_texts"] = (cd.get("sent_texts", []) + [re.sub(r"\s+", " ", cap).strip()[:400]])[-40:]
+    cd["sent_texts"] = (cd.get("sent_texts", []) + [re.sub(r"\s+", " ", cap).strip()[:1000]])[-40:]
 
 
 def recent_texts(ch):
@@ -347,6 +347,24 @@ def fresh(ch, keyword=None, n=3):
         recent = []
     return ("\nNão repita frases, aberturas nem fechamentos destes posts recentes do canal; escreva com outras palavras:\n"
             + "\n---\n".join(recent)) if recent else ""
+
+
+def endings(ch, keyword, n=4):
+    """The closing sentences of the latest posts containing keyword, so the AI closes with a new idea (Rule 1)."""
+    try:
+        key = lambda t: re.sub(r"\W+", "", t)[:60]
+        page = recent_texts(ch)
+        on_page = {key(t) for t in page}
+        pool = [t for t in SENT_HISTORY if key(t) not in on_page] + page
+        out = []
+        for t in [t for t in pool if keyword in t][-n:]:
+            parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", t) if len(p.strip()) > 12]
+            if parts:
+                out.append(" ".join(parts[-2:])[-220:])
+    except Exception:
+        out = []
+    return ("\nEstes foram os fechamentos das últimas análises; termine com uma ideia e palavras diferentes de todas "
+            "elas (nada de variações):\n" + "\n".join(f"- {e}" for e in out)) if out else ""
 
 
 def already_in_channel(ch, cap):
@@ -696,7 +714,7 @@ def slot_overview(ch, ctx):
     intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({n} {'voto' if n == 1 else 'votos'}). Aqui está a análise.\n\n" if voted else ""
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
              f"e como os ativos relacionados se moveram. Termine com o que observar no dia."
-             + (fresh(ch, "Resist", n=4) or fresh(ch)), facts, 800 - len(intro))
+             + (fresh(ch, "Resist", n=4) or fresh(ch)) + endings(ch, "Resist"), facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
     return [(p, cap, {"after": posted})]
 
