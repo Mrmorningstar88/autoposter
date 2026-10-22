@@ -1007,8 +1007,9 @@ def spot_now():
 
 def sample_basis(samples, fut=None):
     """Gold futures minus spot from the spot prices saved by earlier runs, each set against the GC=F 1-minute bar of
-    the same moment (Yahoo's futures arrive about 10 minutes late, so only earlier samples can be matched). Samples
-    far from the newest ones (a contract roll in between) are left out. None with fewer than 3 matches."""
+    the same moment (Yahoo's futures arrive about 10 minutes late, so only earlier samples can be matched). Up to the 6
+    newest matches; those more than $1 from the newest three (an older level, or a contract roll) are left out. None
+    with fewer than 3 matches."""
     fut = load_tf("GC=F", "1m") if fut is None else fut
     starts = [t.tz_convert("UTC").to_pydatetime() for t in fut.index]
     diffs = []
@@ -1019,12 +1020,12 @@ def sample_basis(samples, fut=None):
             continue                                  # no futures bar at that minute: market closed or not published yet
         o, c = float(fut["Open"].iloc[i]), float(fut["Close"].iloc[i])
         diffs.append(o + (c - o) * (when - starts[i]).total_seconds() / 60 - p)
-        if len(diffs) >= 8:
+        if len(diffs) >= 6:
             break
     if len(diffs) < 3:
         return None
-    anchor = st.median(diffs[:3])
-    keep = [x for x in diffs if abs(x - anchor) <= 2.5]
+    anchor = st.median(diffs[:3])                     # the newest samples lead: the gap moves by dollars in a day
+    keep = [x for x in diffs if abs(x - anchor) <= 1.0]
     return round(st.median(keep), 2) if len(keep) >= 3 else None
 
 
