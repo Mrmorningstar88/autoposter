@@ -7,6 +7,7 @@ These rules override everything else in this repository. Any change must keep th
    - A trade setup is posted once: a new signal with the same instrument and side and an entry within 0.15% of one
      posted in the last 24 hours counts as a repeat and is skipped (own setups and AFX signals alike).
    - A signal result is posted once, and never for a signal whose post was deleted from the channel.
+   - One open setup per market: no new own setup on a market whose last setup (from the past 24 hours) has no result yet.
    - A news story is used in one carousel only (remembered for 10 days).
    - Last check before every photo or album: if its opening lines already appear in the channel's latest posts, it is not sent.
 2. **Never disclose personal information.**

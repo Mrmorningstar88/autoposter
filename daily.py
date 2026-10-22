@@ -952,9 +952,13 @@ def slot_signal(ch, ctx):
     item = followup_post(ch, ctx)
     if item:
         return [item]
-    # 3. own setup from the chart engine
+    # 3. own setup from the chart engine, never on a market that still has an open setup from the last day
     pref = d.get("pref", {})
-    for name in sorted((ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"]) if is_open else [], key=lambda m: -pref.get(m, 0)):
+    busy = {x["name"] for x in d.get("signals", []) if not x.get("followed") and now - x["ts"] < 86400}
+    if busy:
+        print(f"  · open setups, no new one on: {', '.join(sorted(busy))}")
+    for name in sorted([m for m in (ch["markets"] or ["XAUUSD", "EURUSD", "GBPUSD"]) if m not in busy] if is_open else [],
+                       key=lambda m: -pref.get(m, 0)):
         for tf in ("15m", "1h") if name == "XAUUSD" else ("1h",):
             p, c, res = S.render_entry_chart(name, tf, 70, ctx["basis"] if name == "XAUUSD" else 0.0)
             if res["plan"] and not seen_setup(d, name, res["plan"], ctx):
