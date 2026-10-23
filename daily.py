@@ -713,7 +713,8 @@ def slot_overview(ch, ctx):
     n = voted["counts"][focus] if voted else 0
     intro = f"🗳 Vocês escolheram: {A[focus]['label'].upper()} ({n} {'voto' if n == 1 else 'votos'}). Aqui está a análise.\n\n" if voted else ""
     cap = ai(f"Escreva uma visão geral curta de {A[focus]['label']} para hoje: tendência, níveis principais (suporte/resistência) "
-             f"e como os ativos relacionados se moveram. Termine com o que observar no dia."
+             f"e como os ativos relacionados se moveram. Termine com o que observar no dia. Não abra com a fórmula "
+             f"'<ativo> ... nesta <dia da semana>' (já usada várias vezes); comece por outro ângulo."
              + (fresh(ch, "Resist", n=4) or fresh(ch)) + endings(ch, "Resist"), facts, 800 - len(intro))
     cap = intro + (cap or template_overview(focus, facts))
     return [(p, cap, {"after": posted})]
