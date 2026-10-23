@@ -1026,7 +1026,10 @@ def sample_basis(samples, fut=None):
         return None
     anchor = st.median(diffs[:3])                     # the newest samples lead: the gap moves by dollars in a day
     keep = [x for x in diffs if abs(x - anchor) <= 1.0]
-    return round(st.median(keep), 2) if len(keep) >= 3 else None
+    if len(keep) < 3:
+        print(f"  · gold spot samples disagree (newest first): {', '.join(f'{x:.2f}' for x in diffs)}")
+        return None
+    return round(st.median(keep), 2)
 
 
 def gold_basis(rows=None, last=None, samples=None):
