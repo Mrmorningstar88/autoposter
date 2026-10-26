@@ -549,13 +549,51 @@ MORNING_THEMES = ["paciência para esperar o setup certo", "aceitar perdas peque
                   "qualidade acima de quantidade de operações", "respeitar o tamanho da posição"]
 
 
+# Rule 1: tips already posted per theme (the theme comes back every 10 days), so a theme never gets the same tip again.
+# Seeded with what the channel posted before this memory existed; each morning adds its own.
+MORNING_TIPS_SEED = {
+    "seguir o plano de trading definido antes do pregão": [
+        "Defina seu stop antes de entrar, respeite o tamanho da posição e não opere por impulso. Disciplina primeiro, resultado depois.",
+        "O plano foi feito com a cabeça fria. Não deixe o calor do pregão reescrever o que você já decidiu."],
+    "paciência para esperar o setup certo": [
+        "Movimentos moderados até aqui. Bom momento para observar antes de agir.",
+        "O melhor trade da semana pode ser aquele que você não abriu. Deixe o preço chegar até o seu nível, não corra atrás dele."],
+    "controlar as emoções depois de um gain ou de um loss": [
+        "O mercado não lembra do seu último trade. Depois de um gain, nada de euforia. Depois de um loss, nada de vingança."],
+    "conferir o calendário econômico antes de operar": [
+        "Antes do primeiro clique, abra o calendário econômico. Um dado fora do radar pode virar o gráfico em segundos."],
+    "aceitar perdas pequenas como parte do jogo": [
+        "Um stop curto é o preço da entrada, não um sinal de fracasso. Quem paga pouco para errar continua na mesa para acertar.",
+        "Stop pequeno é custo de operar, não sinal de fracasso. Aceite a perda curta e siga o plano."],
+    "não operar por impulso ou por tédio": [
+        "O mercado não precisa da sua presença o tempo todo. Tédio não é sinal. Impulso não é estratégia. Se não há setup, não há operação."],
+    "respeitar o tamanho da posição": [
+        "O tamanho da posição decide se um erro vira lição ou vira prejuízo sério. Escolha o lote antes da entrada, nunca depois."],
+    "proteger o capital acima de tudo": [
+        "Capital preservado é o que garante a próxima oportunidade. Lucro pode esperar, a sua conta não pode sumir."],
+}
+
+
+def closing_sentences(text, n=3, limit=300):
+    """The last sentences of a caption (where the morning tip sits), for the per-theme memory."""
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", re.sub(r"\s+", " ", text)) if len(p.strip()) > 12]
+    return " ".join(parts[-n:])[-limit:]
+
+
 def slot_morning(ch, ctx):
+    d = ctx["d"]
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
     p = market_card(qs, "Bom dia, traders", "morning.png")
+    theme = pick(MORNING_THEMES)
+    used = d.get("morning_tips", {}).get(theme) or MORNING_TIPS_SEED.get(theme, [])
+    before = ("\nFrases já publicadas no canal sobre esse tema; traga outra ideia, outra imagem e outras palavras, nada "
+              "parecido com elas:\n" + "\n".join(f"- {t}" for t in used[-3:])) if used else ""
     cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
-             f"e uma frase curta e original sobre {pick(MORNING_THEMES)} (sem escrever rótulos como 'tema do dia')."
-             + fresh(ch, "Bom dia"),
+             f"e uma frase curta e original sobre {theme} (sem escrever rótulos como 'tema do dia')."
+             + before + fresh(ch, "Bom dia"),
              facts_text(qs), 700)
+    if cap and ctx["live"]:
+        d.setdefault("morning_tips", {})[theme] = (list(used) + [closing_sentences(cap)])[-3:]
     cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
 
