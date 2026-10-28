@@ -95,6 +95,16 @@ def quotes(keys, basis):
             prev = c[c.index.date < today]
             ref = float(prev.iloc[-1]) if len(prev) else float(c.iloc[0])
             last = float(c.iloc[-1])
+            if k in ("IBOV", "SPX"):                           # exchange indices: the official close (after the closing auction) is on the daily bars
+                try:
+                    dd = yf.download(a["ticker"], period="10d", interval="1d", progress=False, auto_adjust=False)
+                    if hasattr(dd.columns, "levels"):
+                        dd.columns = dd.columns.get_level_values(0)
+                    dc = [(i.date(), float(v)) for i, v in dd["Close"].dropna().items()]
+                    ref = next((v for day, v in reversed(dc) if day < today), ref)
+                    last = next((v for day, v in reversed(dc) if day == today), last)
+                except Exception as e:
+                    print(f"  ! no daily closes for {k}, using hourly: {e}")
             stale = today < datetime.now(TZ).date()          # market not open yet today: the change is the last session's
             ago = "ontem" if today == datetime.now(TZ).date() - timedelta(days=1) else WEEKDAYS[today.weekday()].lower()
             out[k] = dict(a, price=last, chg=(last / ref - 1) * 100, spark=[float(x) for x in c.iloc[-48:]], stale=stale, ago=ago)
