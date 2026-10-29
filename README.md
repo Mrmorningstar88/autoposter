@@ -6,7 +6,7 @@ Posts to @sanstostrades in Portuguese, Monday–Friday, Brazil time (BRT):
 |-------|------|
 | 09:00 | Good-morning card with the main markets (gold, FX, dollar/real, bitcoin, oil, silver, S&P 500, Ibovespa) |
 | 11:00 | Overview of one asset (4H chart, trend, support/resistance) + 3 related markets. The asset is yesterday's poll winner; with no votes it is the biggest mover |
-| 13:00 | Trading signal from the source channel (only if it was posted in the last 90 min, during Brazilian daytime). If none: the result of an earlier signal. If none: our own chart setup. Every signal and result ends with the DM hook |
+| 13:00 | Trading signal from the source channel (only if it was posted in the last 90 min, during Brazilian daytime). If none: the result of an earlier signal (a limit entry not reached within 24 hours is cancelled, with no result). If none: our own chart setup. Every signal and result ends with the DM hook |
 | 15:00 | Native Telegram poll "which asset should I analyse tomorrow?". It closes at the next 11:00 run; the result is sent to you and decides the 11:00 asset |
 | 17:00 | Manual |
 | 19:00 | Same as 13:00. On Friday the market has closed by then, so no new entry: a result or a panorama |

@@ -1095,7 +1095,7 @@ def finish_signal(ch, ctx, name, tf, plan, p, cap, origin):
 
 
 def outcome(sig, basis):
-    """Walk the candles since the post: (status, candles). status: open | TP1 | TP2 | SL | BE | expired.
+    """Walk the candles since the post: (status, candles). status: open | TP1 | TP2 | SL | BE | expired (not filled within a day).
     1-minute candles when they reach back to the post (Yahoo keeps ~5 days), else 15-minute ones. Each candle's range
     includes the previous close, so a price crossed between two quotes or jumped over in a gap still counts. Inside one
     candle the order of the moves is unknown, so on the candle where a pending entry fills only the stop counts (a target
@@ -1113,11 +1113,14 @@ def outcome(sig, basis):
     df = df[df.index >= start]
     up = sig["side"] == "BUY"
     live, tp1, prev = sig["at_market"], False, None
-    for hi, lo, close in zip(df["High"], df["Low"], df["Close"]):
+    expiry = start + timedelta(days=1)                     # a pending entry not filled within a day is cancelled
+    for t, hi, lo, close in zip(df.index, df["High"], df["Low"], df["Close"]):
         if prev is not None:                   # the move from the last close counts too: Yahoo's 1-minute forex
             hi, lo = max(hi, prev), min(lo, prev)  # candles are single quotes, and a gap jumps over the price
         prev = close
         if not live:
+            if t >= expiry:
+                return "expired", df
             live = lo <= sig["entry"] <= hi
             if live and ((lo <= sig["sl"]) if up else (hi >= sig["sl"])):
                 return "SL", df
