@@ -114,7 +114,7 @@ def quotes(keys, basis):
 
 
 def pct(x):
-    return f"{x:+.2f}%"
+    return f"{round(x, 2) + 0.0:+.2f}%"                  # + 0.0 turns -0.00 into +0.00
 
 
 def fmt(x, dec):
