@@ -827,7 +827,9 @@ def overview_card(focus, qs, basis):
                  rel="\n".join(f"{ICON.get(k, '•')} {qs[k]['label']} · {move(qs[k])}" for k in rel))
     facts_str = (f"Ativo: {ICON.get(focus, '')} {a['label']}, preço {fmt(last, dec)}, {pct(q['chg'])} hoje. {tl} "
                  f"Resistências: {facts['res']}. Suportes: {facts['sup']}. Relacionados: "
-                 + ", ".join(f"{ICON.get(k, '')} {qs[k]['label']} {pct(qs[k]['chg'])}" for k in rel))
+                 + ", ".join(f"{ICON.get(k, '')} {qs[k]['label']} {pct(qs[k]['chg'])}"
+                             + (f" no pregão de {qs[k].get('ago', 'ontem')} (ainda não abriu hoje)" if qs[k].get("stale") else "")
+                             for k in rel))
     facts["__str__"] = facts_str
     return p, Facts(facts)
 
