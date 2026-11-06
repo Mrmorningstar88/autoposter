@@ -592,6 +592,14 @@ def closing_sentences(text, n=3, limit=300):
     return " ".join(parts[-n:])[-limit:]
 
 
+def repeated_sentence(text, olds):
+    """A sentence of text (8+ words) already published in one of olds, or None (Rule 1)."""
+    split = lambda t: re.split(r"(?<=[.!?])\s+|\n+|(?<=\d%) |(?<= no dia) ", t)      # also break after market lines
+    norm = lambda s: re.sub(r"\W+", " ", s).strip().lower()
+    seen = {norm(p) for o in olds for p in split(o)}
+    return next((p for p in split(text) if len(p.split()) >= 8 and norm(p) in seen), None)
+
+
 def slot_morning(ch, ctx):
     d = ctx["d"]
     qs = quotes([k for k, *_ in ASSETS], ctx["basis"])
@@ -600,12 +608,22 @@ def slot_morning(ch, ctx):
     used = d.get("morning_tips", {}).get(theme) or MORNING_TIPS_SEED.get(theme, [])
     before = ("\nFrases já publicadas no canal sobre esse tema; traga outra ideia, outra imagem e outras palavras, nada "
               "parecido com elas:\n" + "\n".join(f"- {t}" for t in used[-3:])) if used else ""
-    cap = ai("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
-             f"e uma frase curta e original sobre {theme} (sem escrever rótulos como 'tema do dia')."
-             + before + fresh(ch, "Bom dia"),
-             facts_text(qs), 700)
+    others = [t for th, ts in d.get("morning_tips", {}).items() if th != theme for t in ts]
+    if others:                                              # other themes' tips too: the same image must not come back
+        before += ("\nDicas de outros temas já publicadas; não reutilize nenhuma imagem, metáfora ou frase delas:\n"
+                   + "\n".join(f"- {t}" for t in others[-24:]))
+    task = ("Escreva um post curto de bom dia para o canal: saudação, 2-3 destaques do mercado nesta manhã com os números, "
+            f"e uma frase curta e original sobre {theme} (sem escrever rótulos como 'tema do dia')."
+            + before + fresh(ch, "Bom dia"))
+    cap = ai(task, facts_text(qs), 700)
+    olds = [t for ts in d.get("morning_tips", {}).values() for t in ts] + SENT_HISTORY
+    rep = cap and repeated_sentence(cap, olds)
+    if rep:                                                 # a sentence already published: one rewrite, else the template
+        print(f"  · morning copy repeats a published sentence, rewriting: {rep[:70]}")
+        cap = ai(task + f"\nA frase \"{rep}\" já foi publicada no canal: não a use, nem nada parecido.", facts_text(qs), 700)
+        cap = None if cap and repeated_sentence(cap, olds) else cap
     if cap and ctx["live"]:
-        d.setdefault("morning_tips", {})[theme] = (list(used) + [closing_sentences(cap)])[-3:]
+        d.setdefault("morning_tips", {})[theme] = (list(used) + [closing_sentences(cap, n=4, limit=400)])[-3:]
     cap = cap or pick(MORNING).format(m=movers_text(qs))
     return [(p, cap)]
 
