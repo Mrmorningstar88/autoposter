@@ -703,7 +703,10 @@ def poll_options(d):
     polls = d.get("polls", [])
     age = lambda k: max((i for i, p in enumerate(polls) if k in p.get("counts", {})), default=-1)
     rest = sorted((k for k in POLL_POOL if k not in ranked[:2]), key=age)
-    return ranked[:2] + rest[:2]
+    recent = [set(p.get("counts", {})) for p in polls[-10:]]   # Rule 1: never the same four as a recent poll
+    pairs = [(a, b) for i, a in enumerate(rest) for b in rest[i + 1:]]
+    pair = next((pr for pr in pairs if set(ranked[:2]) | set(pr) not in recent), tuple(rest[:2]))
+    return ranked[:2] + list(pair)
 
 
 POLL_Q = ["🎯 Qual mercado merece a análise de amanhã às 11h?",            # used in turn, one per poll (rule 1)
@@ -720,14 +723,34 @@ POLL_Q = ["🎯 Qual mercado merece a análise de amanhã às 11h?",            
           "🔍 Qual gráfico você quer ver destrinchado amanhã às 11h?"]
 
 
+def poll_question(d):
+    """Rule 1: a question never asked before. The AI writes it, seeing the earlier ones; the fixed list (all of it used
+    at least once by now) is only the fallback. Returns (question, next fixed index or None)."""
+    friday = datetime.now(TZ).weekday() == 4                 # Friday: the next 11:00 run is on Monday
+    asked = d.get("poll_asked") or list(POLL_Q)
+    norm = lambda s: re.sub(r"\W+", " ", s.replace("na segunda-feira", "amanhã").replace("segunda-feira", "amanhã")).strip().lower()
+    q = ai(f"Escreva UMA pergunta curta de enquete, com até 90 caracteres e um emoji no início, convidando o público a "
+           f"votar no ativo que eu analiso {'na segunda-feira' if friday else 'amanhã'} às 11h. Responda só com a pergunta, "
+           "sem aspas. Não repita nem imite estas perguntas já usadas:\n" + "\n".join(f"- {x}" for x in asked[-40:]),
+           "", 120)
+    q = (q or "").strip().splitlines()[0].strip().strip('"«»') if q else ""
+    if q and "11h" in q and len(q) <= 120 and norm(q) not in {norm(x) for x in asked}:
+        return q, None
+    i = d.get("poll_q_i", 0) % len(POLL_Q)
+    q = POLL_Q[i]
+    if friday:
+        q = q.replace("de amanhã", "de segunda-feira").replace("amanhã", "na segunda-feira").replace("Amanhã", "Na segunda-feira")
+    return q, i + 1
+
+
 def slot_poll(ch, ctx):
     d = ctx["d"]
     close_poll(ch, ctx, late=True)
-    i = d.get("poll_q_i", 0) % len(POLL_Q)                  # next question in turn: no repeat for 12 polls
-    q = POLL_Q[i]
-    if datetime.now(TZ).weekday() == 4:                      # Friday: the next 11:00 run is on Monday
-        q = q.replace("de amanhã", "de segunda-feira").replace("amanhã", "na segunda-feira").replace("Amanhã", "Na segunda-feira")
-    return [{"poll": dict(question=q, keys=poll_options(d), q_next=i + 1)}]
+    q, nxt = poll_question(d)
+    spec = dict(question=q, keys=poll_options(d))
+    if nxt is not None:
+        spec["q_next"] = nxt
+    return [{"poll": spec}]
 
 
 def poll_text(question, opts, fmt):
@@ -752,6 +775,7 @@ def send_poll(ch, spec, ctx):
     if j.get("ok"):
         if "q_next" in spec:
             ctx["d"]["poll_q_i"] = spec["q_next"]
+        ctx["d"]["poll_asked"] = ((ctx["d"].get("poll_asked") or list(POLL_Q)) + [spec["question"]])[-80:]
         ctx["d"]["open_poll"] = dict(message_id=j["result"]["message_id"], keys=spec["keys"], ts=time.time(),
                                      poll_id=j["result"].get("poll", {}).get("id"))
     else:
