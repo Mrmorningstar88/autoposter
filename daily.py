@@ -624,7 +624,12 @@ def slot_morning(ch, ctx):
         cap = None if cap and repeated_sentence(cap, olds) else cap
     if cap and ctx["live"]:
         d.setdefault("morning_tips", {})[theme] = (list(used) + [closing_sentences(cap, n=4, limit=400)])[-3:]
-    cap = cap or pick(MORNING).format(m=movers_text(qs))
+    if not cap:                                             # template: the first whose tip line was not posted lately
+        start = MORNING.index(pick(MORNING))
+        order = MORNING[start:] + MORNING[:start]
+        norm = lambda s: re.sub(r"\W+", " ", s).strip().lower()
+        posted = [norm(o) for o in olds]
+        cap = next((t for t in order if not any(norm(t.split("{m}")[-1]) in o for o in posted)), order[0]).format(m=movers_text(qs))
     return [(p, cap)]
 
 
@@ -721,6 +726,12 @@ POLL_Q = ["🎯 Qual mercado merece a análise de amanhã às 11h?",            
           "🗳 Você escolhe: qual ativo ganha análise completa amanhã às 11h?",
           "📈 Amanhã às 11h eu analiso o mais votado. Qual vai ser?",
           "🔍 Qual gráfico você quer ver destrinchado amanhã às 11h?"]
+POLL_OPEN = ["🗳 Sua vez:", "📊 Enquete rápida:", "👇 Vote aqui:", "🧭 Você decide:", "🔎 Pergunta do dia:",
+             "🎯 Escolha sua:", "📌 Participe:", "💬 Sua opinião conta:"]          # parts for questions without the AI
+POLL_ASK = ["qual ativo merece análise {adv} às 11h?", "qual gráfico eu abro {adv} às 11h?",
+            "em qual mercado você quer foco {adv} às 11h?", "qual ativo eu estudo para você {adv} às 11h?",
+            "qual dessas análises sai {adv} às 11h?", "o que você quer ver {adv} às 11h?",
+            "qual ativo ganha o destaque {adv} às 11h?", "qual mercado entra na análise {adv} às 11h?"]
 
 
 def poll_question(d):
@@ -734,8 +745,16 @@ def poll_question(d):
            "sem aspas. Não repita nem imite estas perguntas já usadas:\n" + "\n".join(f"- {x}" for x in asked[-40:]),
            "", 120)
     q = (q or "").strip().splitlines()[0].strip().strip('"«»') if q else ""
-    if q and "11h" in q and len(q) <= 120 and norm(q) not in {norm(x) for x in asked}:
+    used = {norm(x) for x in asked}
+    if q and "11h" in q and len(q) <= 120 and norm(q) not in used:
         return q, None
+    adv = "na segunda-feira" if friday else "amanhã"         # no AI: build an unused one from parts (64 of them)
+    day = datetime.now(TZ).toordinal()
+    combos = [f"{o} {a.format(adv=adv)}" for k in range(len(POLL_ASK) * len(POLL_OPEN))
+              for o, a in [(POLL_OPEN[(day + k) % len(POLL_OPEN)], POLL_ASK[(day + k // len(POLL_OPEN)) % len(POLL_ASK)])]]
+    built = next((c for c in combos if norm(c) not in used), None)
+    if built:
+        return built, None
     i = d.get("poll_q_i", 0) % len(POLL_Q)
     q = POLL_Q[i]
     if friday:
