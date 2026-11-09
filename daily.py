@@ -750,8 +750,8 @@ def poll_question(d):
         return q, None
     adv = "na segunda-feira" if friday else "amanhã"         # no AI: build an unused one from parts (64 of them)
     day = datetime.now(TZ).toordinal()
-    combos = [f"{o} {a.format(adv=adv)}" for k in range(len(POLL_ASK) * len(POLL_OPEN))
-              for o, a in [(POLL_OPEN[(day + k) % len(POLL_OPEN)], POLL_ASK[(day + k // len(POLL_OPEN)) % len(POLL_ASK)])]]
+    n = len(POLL_OPEN)                                       # each step changes both parts; all n*n pairs are reached
+    combos = [f"{POLL_OPEN[(day + k) % n]} {POLL_ASK[(day + k + k // n) % n].format(adv=adv)}" for k in range(n * n)]
     built = next((c for c in combos if norm(c) not in used), None)
     if built:
         return built, None
