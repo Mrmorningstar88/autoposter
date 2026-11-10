@@ -1304,7 +1304,7 @@ def result_card(ch, sig, status, basis):
 # ================================================================= 21:00 news roundup (carousel)
 SOURCES = {"br.investing.com": "Investing.com", "www.infomoney.com.br": "InfoMoney"}
 TOPICS = [  # tag on the slide, keywords, asset shown as "impact"
-    ("DÓLAR", r"D[ÓO]LAR|C[ÂA]MBIO", "USDBRL"), ("OURO", r"\bOURO\b", "XAUUSD"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
+    ("DÓLAR", r"D[ÓO]LAR|C[ÂA]MBIO", "USDBRL"), ("OURO", r"\bOURO\b(?!\s+(?:FINO|PRETO|BRANCO|VERDE)\b)", "XAUUSD"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
     ("BOLSA", r"IBOVESPA|BOLSA|B3\b", "IBOV"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"), ("EURO", r"\bEURO\b|BCE\b", "EURUSD"),
     ("LIBRA", r"LIBRA|BOE\b|REINO UNIDO", "GBPUSD"), ("IENE", r"IENE|JAP[ÃA]O|BOJ\b", "USDJPY"),
     ("EUA", r"WALL STREET|S&P|NASDAQ|\bFED\b|TREASUR|PAYROLL|EUA\b", "SPX"), ("JUROS", r"JUROS|COPOM|SELIC|INFLA|IPCA|PIB\b", None)]
@@ -1501,7 +1501,7 @@ ECON_TOPICS = [  # US and world only: Brazil-only stories (Copom, Selic, Ibovesp
     ("EUA", r"\bFED\b|WALL STREET|S&P|NASDAQ|DOW JONES|TREASUR|PAYROLL|EUA\b|ESTADOS UNIDOS|AMERICAN|POWELL|TRUMP|CASA BRANCA", "SPX"),
     ("CHINA", r"CHINA|CHIN[ÊE]S|PEQUIM|XI JINPING", None), ("EUROPA", r"EUROPA|EUROPE|\bBCE\b|ZONA DO EURO|\bEURO\b|ALEMANHA", "EURUSD"),
     ("JAPÃO", r"JAP[ÃA]O|\bBOJ\b|IENE", "USDJPY"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
-    ("OURO", r"\bOURO\b", "XAUUSD"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"),
+    ("OURO", r"\bOURO\b(?!\s+(?:FINO|PRETO|BRANCO|VERDE)\b)", "XAUUSD"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"),
     ("MUNDO", r"\bFMI\b|BANCO MUNDIAL|ECONOMIA (GLOBAL|MUNDIAL)|TARIFA|COM[ÉE]RCIO (GLOBAL|MUNDIAL|EXTERIOR)|G20|G7\b", None)]
 ECON_DOMESTIC = r"IBOVESPA|\bB3\b|R\$|COPOM|SELIC|IPCA|HADDAD|TESOURO DIRETO"   # Brazil-only market stories
 TAG_COL.update({"CHINA": "#F0506E", "EUROPA": "#5B8CFF", "JAPÃO": "#F0506E", "MUNDO": "#B07CF0"})
