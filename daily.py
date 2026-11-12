@@ -812,7 +812,10 @@ def slot_overview(ch, ctx):
     if rec and rec.get("winner") in TRADABLE:
         focus, voted = rec["winner"], rec
     else:
-        cand = [k for k in TRADABLE if k in qs and k != d.get("last_focus")]
+        since = (datetime.now(TZ) - timedelta(days=3)).strftime("%Y-%m-%d")     # Rule 1: not an asset of the last 3 days
+        recent = {v for k, v in d.get("covered", {}).items() if k.endswith(":11") and k[:10] >= since} | {d.get("last_focus")}
+        cand = ([k for k in TRADABLE if k in qs and k not in recent]
+                or [k for k in TRADABLE if k in qs and k != d.get("last_focus")])
         focus, voted = max(cand, key=lambda k: abs(qs[k]["chg"]) * (1 + d.get("pref", {}).get(k, 0))), None
     p, facts = overview_card(focus, qs, ctx["basis"])
 
