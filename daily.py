@@ -554,6 +554,38 @@ MORNING = ["☀️ Bom dia, traders!\n\nDestaques desta manhã:\n{m}\n\nPlano de
            "🌅 Bom dia, pessoal!\n\nO que se moveu desde ontem:\n{m}\n\nOpere o plano, não a emoção. Bom dia de trades!",
            "☕ Bom dia, traders!\n\nPanorama da manhã:\n{m}\n\nStop sempre definido antes da entrada. Bora pro dia! 💪",
            "☀️ Bom dia!\n\nOs números de abertura:\n{m}\n\nMenos operações, mais qualidade. Excelente dia a todos."]
+# Template closing lines when the AI is unavailable (Rule 1): each one is posted once. The MORNING lines above were
+# all posted on Nov 9-13, 2026, so the template keeps their greetings and takes its closing line from here.
+MORNING_LINES = [
+    "Defina antes do pregão quanto aceita perder hoje. Esse número decide quando parar, não o humor. Bons trades!",
+    "Spread largo logo na abertura costuma enganar. Espere a liquidez chegar antes da primeira entrada. Bom dia de trades!",
+    "Anote cada operação: entrada, saída e o motivo. Em um mês, o seu diário ensina mais do que qualquer curso. 📒",
+    "Alavancagem não aumenta o seu acerto, só aumenta o tamanho do erro. Use com moderação. Bons trades!",
+    "Três perdas seguidas? Feche a plataforma e volte amanhã. O mercado continua aqui. 💪",
+    "Um bom setup tem entrada, stop e alvo antes do clique. Se faltar um dos três, não é setup. 🎯",
+    "Notícia forte no calendário? Reduza o lote ou espere a poeira baixar. Proteger o capital também é operar.",
+    "Realizar parcial no primeiro alvo tira o peso da operação e deixa a cabeça livre para o resto. Bom dia a todos!",
+    "O gráfico de 1 hora mostra a direção; o de 5 minutos mostra o barulho. Comece pelo maior. Bons trades!",
+    "Não existe trade obrigatório. Se nada se encaixa no plano, ficar de fora é uma decisão profissional.",
+    "Arriscar 1% por operação parece pouco até você ver quantas perdas seguidas a conta aguenta. Bora pro dia! 💪",
+    "Afastar o stop só para não ser stopado é adiar uma perda maior. Onde você colocou, ali ele fica. 🛑",
+    "Cada dia da semana tem o seu ritmo. Observe antes de assumir que hoje vai ser igual a ontem. Bom dia de trades!",
+    "Ganhar e devolver tudo no mesmo dia é o erro mais comum. Bateu a meta, proteja o resultado. 💪",
+    "Revise as últimas operações antes de abrir a próxima. Os erros repetidos aparecem rápido. Bons trades!",
+    "Confirmação vale mais que antecipação. Deixe o candle fechar antes de decidir. 🎯",
+    "Dormir bem também faz parte da estratégia. Cansaço vira impulso na frente do gráfico. Excelente dia a todos!",
+    "Comprar ouro e EUR/USD ao mesmo tempo é quase a mesma aposta duas vezes: as duas dependem do dólar. Cuide da exposição total.",
+    "Meta do dia não é ordem do mercado. Se o preço não oferece, não force. Bons trades!",
+    "Antes de entrar, pergunte: onde esta ideia está errada? Esse ponto é o seu stop. 🛑",
+    "Um trade perdedor bem executado vale mais que um vencedor por sorte. Julgue o processo, não o resultado.",
+    "Menos telas, menos ativos, mais foco. Domine poucos pares antes de querer operar todos. 💪",
+    "Volume tem horário: as aberturas de Londres e de Nova York movem mais o mercado do que o fim da tarde. Planeje-se.",
+    "Uma semana ruim não define o seu ano. Reduza o lote, siga o plano e deixe a consistência trabalhar.",
+    "Se você precisa olhar o gráfico a cada minuto, o lote provavelmente está grande demais. Bons trades!",
+    "Disciplina é repetir o básico todos os dias, mesmo quando ninguém está olhando. Bom dia de trades!",
+    "Antes de aumentar o lote, aumente a consistência. Primeiro o processo, depois o tamanho. 💪",
+    "Notícias explicam o movimento depois que ele acontece. O seu plano precisa existir antes. 🗓",
+]
 MORNING_THEMES = ["paciência para esperar o setup certo", "aceitar perdas pequenas como parte do jogo",
                   "não operar por impulso ou por tédio", "seguir o plano de trading definido antes do pregão",
                   "conferir o calendário econômico antes de operar", "registrar cada operação num diário de trading",
@@ -624,12 +656,16 @@ def slot_morning(ch, ctx):
         cap = None if cap and repeated_sentence(cap, olds) else cap
     if cap and ctx["live"]:
         d.setdefault("morning_tips", {})[theme] = (list(used) + [closing_sentences(cap, n=4, limit=400)])[-3:]
-    if not cap:                                             # template: the first whose tip line was not posted lately
-        start = MORNING.index(pick(MORNING))
-        order = MORNING[start:] + MORNING[:start]
+    if not cap:                                             # template: the day's greeting and a closing line never posted
         norm = lambda s: re.sub(r"\W+", " ", s).strip().lower()
         posted = [norm(o) for o in olds]
-        cap = next((t for t in order if not any(norm(t.split("{m}")[-1]) in o for o in posted)), order[0]).format(m=movers_text(qs))
+        done = d.get("morning_lines", [])                   # every closing line the template posted, oldest first
+        fresh_lines = [l for l in MORNING_LINES if norm(l) not in done and not any(norm(l) in o for o in posted)]
+        line = (fresh_lines[0] if fresh_lines else         # all used: the one posted longest ago
+                next((l for u in done for l in MORNING_LINES if norm(l) == u), MORNING_LINES[0]))
+        if ctx["live"]:
+            d["morning_lines"] = ([u for u in done if u != norm(line)] + [norm(line)])[-200:]
+        cap = pick(MORNING).split("{m}")[0] + movers_text(qs) + "\n\n" + line
     return [(p, cap)]
 
 
