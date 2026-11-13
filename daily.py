@@ -851,8 +851,7 @@ def slot_overview(ch, ctx):
     if rec and rec.get("winner") in TRADABLE:
         focus, voted = rec["winner"], rec
     else:
-        since = (datetime.now(TZ) - timedelta(days=3)).strftime("%Y-%m-%d")     # Rule 1: not an asset of the last 3 days
-        recent = {v for k, v in d.get("covered", {}).items() if k.endswith(":11") and k[:10] >= since} | {d.get("last_focus")}
+        recent = recent_focus(d)                                              # Rule 1: not an asset of the last 3 days
         cand = ([k for k in TRADABLE if k in qs and k not in recent]
                 or [k for k in TRADABLE if k in qs and k != d.get("last_focus")])
         focus, voted = max(cand, key=lambda k: abs(qs[k]["chg"]) * (1 + d.get("pref", {}).get(k, 0))), None
@@ -878,6 +877,12 @@ def template_overview(focus, f):
             f"Resistência: {f['res']} · Suporte: {f['sup']}\n\n📊 Relacionados:\n{f['rel']}\n\n⚠️ Não é recomendação de investimento.")
 
 
+def recent_focus(d, days=3):
+    """Assets shown on the overview card (11:00 analysis or a panorama) in the last days, plus the last 11:00 focus."""
+    since = (datetime.now(TZ) - timedelta(days=days)).strftime("%Y-%m-%d")
+    return {v for k, v in d.get("covered", {}).items() if k[:10] >= since} | {d.get("last_focus")}
+
+
 def overview_card(focus, qs, basis):
     import matplotlib.patches as mp
     a = A[focus]
@@ -890,6 +895,13 @@ def overview_card(focus, qs, basis):
     lv = [l["price"] for l in res["levels"]]
     above = sorted(x for x in lv if x > last)[:2]
     below = sorted((x for x in lv if x < last), reverse=True)[:2]
+    lab = {}                                                # price at a new high/low: the period's extreme, never a dash
+    for side, col, ext in ((above, "High", max), (below, "Low", min)):
+        x = float(ext(df[col]))
+        if not side and (x > last if ext is max else x < last):
+            side.append(x)
+            recent = (df[col].idxmax() if ext is max else df[col].idxmin()) >= view.index[0]
+            lab[x] = f" ({'máxima' if ext is max else 'mínima'} recente)" if recent else ""
     q = qs.get(focus, dict(chg=0.0))
     fig = fig_base(a["label"].upper(), f"Visão geral · gráfico 4H  ·  {S.stamp()} {S.TZ_LABEL}")
     fig.text(0.94, 0.935, f"  {tword}  ", fontsize=17, fontweight="bold", color=C["bg"], ha="right", va="top",
@@ -926,7 +938,8 @@ def overview_card(focus, qs, basis):
     p = S.save_clean(fig, f"overview_{focus}.png")
     tl = {1: "Estrutura de alta no 4H, preço acima da média de 50.", -1: "Estrutura de baixa no 4H, preço abaixo da média de 50.",
           0: "Sem direção clara no 4H, preço lateralizado."}[trend]
-    facts = dict(trend_line=tl, res=" / ".join(fmt(x, dec) for x in above) or "—", sup=" / ".join(fmt(x, dec) for x in below) or "—",
+    facts = dict(trend_line=tl, res=" / ".join(fmt(x, dec) + lab.get(x, "") for x in above) or "—",
+                 sup=" / ".join(fmt(x, dec) + lab.get(x, "") for x in below) or "—",
                  rel="\n".join(f"{ICON.get(k, '•')} {qs[k]['label']} · {move(qs[k])}" for k in rel))
     facts_str = (f"Ativo: {ICON.get(focus, '')} {a['label']}, preço {fmt(last, dec)}, {pct(q['chg'])} hoje. {tl} "
                  f"Resistências: {facts['res']}. Suportes: {facts['sup']}. Relacionados: "
@@ -1156,7 +1169,8 @@ def panorama_item(ch, ctx):
     qs = quotes(list(A), ctx["basis"])
     today = datetime.now(TZ).strftime("%Y-%m-%d")
     covered = {v for k, v in d.get("covered", {}).items() if k.startswith(today)} | {d.get("last_focus")}
-    cand = [k for k in TRADABLE if k in qs and k not in covered] or [k for k in TRADABLE if k in qs]
+    cand = ([k for k in TRADABLE if k in qs and k not in recent_focus(d)]         # Rule 1: the same card as the 11:00
+            or [k for k in TRADABLE if k in qs and k not in covered] or [k for k in TRADABLE if k in qs])
     focus = max(cand, key=lambda k: abs(qs[k]["chg"]))
     p, facts = overview_card(focus, qs, ctx["basis"])
     cap = ai(f"Escreva um panorama curto de {A[focus]['label']} para agora: tendência, níveis principais e o que esperar "
