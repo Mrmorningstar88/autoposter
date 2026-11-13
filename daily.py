@@ -738,16 +738,19 @@ def safe_report(ch, ctx, text, to_issue=True):
 
 
 def poll_options(d):
-    """Two audience favourites + the two assets offered longest ago (never-offered first), so every asset rotates in."""
+    """Two audience favourites + the two assets offered longest ago (never-offered first), so every asset rotates in.
+    The favourites come first in the list; with only the top favourite, it comes first."""
     pref = d.get("pref", {})
     ranked = sorted(POLL_POOL, key=lambda k: -pref.get(k, 0))
     polls = d.get("polls", [])
     age = lambda k: max((i for i, p in enumerate(polls) if k in p.get("counts", {})), default=-1)
     rest = sorted((k for k in POLL_POOL if k not in ranked[:2]), key=age)
-    recent = [set(p.get("counts", {})) for p in polls[-10:]]   # Rule 1: never the same four as a recent poll
-    pairs = [(a, b) for i, a in enumerate(rest) for b in rest[i + 1:]]
-    pair = next((pr for pr in pairs if set(ranked[:2]) | set(pr) not in recent), tuple(rest[:2]))
-    return ranked[:2] + list(pair)
+    # Rule 1: never the same four as a recent poll. Both favourites leave only 10 pairs, so the top favourite with three
+    # others comes next (20 sets in all); when every set was offered in the last 20 polls, the one offered longest ago.
+    sets = [ranked[:2] + [a, b] for i, a in enumerate(rest) for b in rest[i + 1:]]
+    sets += [ranked[:1] + [a, b, c] for i, a in enumerate(rest) for j, b in enumerate(rest[i + 1:], i + 1) for c in rest[j + 1:]]
+    used = lambda s: max((i for i, p in enumerate(polls) if set(p.get("counts", {})) == set(s)), default=-1)
+    return next((s for s in sets if used(s) < max(len(polls) - 20, 0)), None) or min(sets, key=used)
 
 
 POLL_Q = ["🎯 Qual mercado merece a análise de amanhã às 11h?",            # used in turn, one per poll (rule 1)
