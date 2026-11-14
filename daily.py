@@ -1360,16 +1360,30 @@ def result_card(ch, sig, status, basis):
 # ================================================================= 21:00 news roundup (carousel)
 SOURCES = {"br.investing.com": "Investing.com", "www.infomoney.com.br": "InfoMoney"}
 # gold only with a market word in the title: "Ouro Fino" (a town) and "classificação Ouro" (an award) are not gold
+# A country name alone is not market news ("EUA suspendem decolagens", "Japão x Brasil: onde assistir"): it needs a market word.
+MARKET_WORDS = (r"ECONOM|\bPIB\b|\bJUROS?\b|INFLA[ÇC]|EMPREGO|TARIFA|D[ÍI]VIDA|D[ÓO]LAR|\bBOLSAS?\b|MERCADO|\bCPI\b|\bPPI\b|"
+                r"VAREJO|IND[ÚU]STRI|SAL[ÁA]RIO|TESOURO|IMPOSTO|COM[ÉE]RCIO|OR[ÇC]AMENT|\bBANCO|BANC[ÁA]RI|A[ÇC][ÕO]ES|"
+                r"RECESS|CRESCIMENTO|PRE[ÇC]OS?\b|CONSUMO|D[ÉE]FICIT|SUPER[ÁA]VIT|PETR[ÓO]LEO|C[ÂA]MBI|MOEDA|\bIENE|LIBRA|"
+                r"\bEURO\b|[ÍI]NDICE|FISCAL|FINAN[ÇC]|INVESTI[DMRT]|INVESTE\b|EXPORTA|IMPORTA|RENDIMENTO|T[ÍI]TULOS|COMMODIT|LUCRO|RECEITA|"
+                r"US\$|%|\bFED\b|BALAN[ÇC]A|SAN[ÇC][ÕO]ES|SHUTDOWN|EMPRES")
+gated = lambda rx: rf"^(?=.*(?:{rx}))(?=.*(?:{MARKET_WORDS}))"
 GOLD_RX = (r"^(?=.*\bOURO\b(?!\s+(?:FINO|PRETO|BRANCO|VERDE)\b))(?=.*(?:PRE[ÇC]O|ON[ÇC]A|COTA[ÇC]|\bSOBE|\bSUBIU|\bCAI\b|"
            r"\bCAIU|\bRECUA|\bAVAN[ÇC]A|\bALTA\b|\bQUEDA|M[ÁA]XIMA|M[ÍI]NIMA|RECORDE|\bMETA(?:L|IS)\b|US\$|D[ÓO]LAR|\bFED\b|"
+           r"\bFECHA|EST[ÁA]VEL|\bPPI\b|\bCPI\b|INFLA[ÇC]|"
            r"JUROS|BANCOS? CENTRA|INVESTID|RESERVA|COMMODIT|MERCADO|\bBOLSA|\bGRAMA|%))")
 TOPICS = [  # tag on the slide, keywords, asset shown as "impact"
     ("DÓLAR", r"D[ÓO]LAR|C[ÂA]MBIO", "USDBRL"), ("OURO", GOLD_RX, "XAUUSD"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
     ("BOLSA", r"IBOVESPA|BOLSA|B3\b", "IBOV"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"), ("EURO", r"\bEURO\b|BCE\b", "EURUSD"),
-    ("LIBRA", r"LIBRA|BOE\b|REINO UNIDO", "GBPUSD"), ("IENE", r"IENE|JAP[ÃA]O|BOJ\b", "USDJPY"),
-    ("EUA", r"WALL STREET|S&P|NASDAQ|\bFED\b|TREASUR|PAYROLL|EUA\b", "SPX"), ("JUROS", r"JUROS|COPOM|SELIC|INFLA|IPCA|PIB\b", None)]
+    ("LIBRA", r"LIBRA|BOE\b|" + gated(r"REINO UNIDO"), "GBPUSD"), ("IENE", r"IENE|BOJ\b|" + gated(r"JAP[ÃA]O"), "USDJPY"),
+    ("EUA", r"WALL STREET|S&P|NASDAQ|\bFED\b|TREASUR|PAYROLL|" + gated(r"\bEUA\b"), "SPX"), ("JUROS", r"JUROS|COPOM|SELIC|INFLA|IPCA|PIB\b", None)]
+# where a headline's subject sits, for topics whose pattern only checks it is there (gold and the gated countries)
+LEAD = {"OURO": r"\bOURO\b", "LIBRA": r"LIBRA|BOE\b|REINO UNIDO", "IENE": r"IENE|BOJ\b|JAP[ÃA]O",
+        "EUA": r"WALL STREET|S&P|NASDAQ|DOW JONES|\bFED\b|TREASUR|PAYROLL|POWELL|\bEUA\b|ESTADOS UNIDOS|AMERICAN|TRUMP|CASA BRANCA",
+        "CHINA": r"CHINA|CHIN[ÊE]S|PEQUIM|XI JINPING", "EUROPA": r"EUROPA|EUROPE|\bBCE\b|ZONA DO EURO|\bEURO\b|ALEMANHA",
+        "JAPÃO": r"JAP[ÃA]O|\bBOJ\b|IENE"}
 TRUSTED = r"FOLHA|G1|CNN|VALOR|ESTAD|INFOMONEY|EXAME|REUTERS|BLOOMBERG|MONEY TIMES|INVESTING|UOL|PODER360|O GLOBO|INVEST NEWS|BTG|XP|E-INVESTIDOR|SEU DINHEIRO|BRAZIL JOURNAL"
-OFF_TOPIC = r"FUTSAL|FUTEBOL|MEDALHA|CAMPEONATO|OL[ÍI]MPI|COPA DO|JOGOS|PARTIDA|PREMIA[ÇC][ÃA]O|BODAS|JOIA"
+OFF_TOPIC = (r"FUTSAL|FUTEBOL|MEDALHA|CAMPEONATO|OL[ÍI]MPI|COPA DO|JOGOS|PARTIDA|PREMIA[ÇC][ÃA]O|BODAS|JOIA|ONDE ASSISTIR|"
+             r"ESCALA[ÇC][ÕO]ES|AMISTOSO|SELE[ÇC][ÃA]O BRASILEIRA|TORCED|BRASILEIR[ÃA]O|LIBERTADORES")
 TAG_COL = {"DÓLAR": "#22C38E", "OURO": "#F2B33D", "PETRÓLEO": "#F08A4B", "BOLSA": "#5B8CFF", "CRIPTO": "#F7931A",
            "EURO": "#5B8CFF", "LIBRA": "#B07CF0", "IENE": "#F0506E", "EUA": "#5BC0EB", "JUROS": "#E6EAF2"}
 
@@ -1403,9 +1417,23 @@ def news(hours=14, feeds=None, topics=None):
                 continue
             if dt >= cut and title and key not in seen:
                 seen.add(key)
-                tag = next(((t, a) for t, rx, a in topics if re.search(rx, title.upper())), None)
+                tag = subject_tag(title, topics)
                 items.append(dict(title=title, dt=dt, src=src.strip(), tag=tag[0] if tag else None, asset=tag[1] if tag else None))
     return sorted(items, key=lambda x: x["dt"], reverse=True)
+
+
+def subject_tag(title, topics):
+    """(tag, asset) of the topic the headline is about: of the topics it matches, the one named first
+    ("Ibovespa sobe; dólar supera ganho" is BOLSA, not DÓLAR). None when no topic matches."""
+    u, best = title.upper(), None
+    for t, rx, a in topics:
+        m = re.search(rx, u)
+        if not m:
+            continue
+        pos = m.start() if m.end() > m.start() else next((x.start() for x in re.finditer(LEAD.get(t, r"$^"), u)), 0)
+        if best is None or pos < best[0]:
+            best = (pos, t, a)
+    return best[1:] if best else None
 
 
 def news_key(title):
@@ -1420,7 +1448,11 @@ def pick_news(items, n=5, seen=()):
     for it in items:
         if it["tag"] and it["tag"] not in used:
             out.append(it); used.add(it["tag"])
-    out += [i for i in items if i["tag"] and i not in out]
+    for it in items:                                        # a second story of a topic only when fewer than 3 subjects
+        if len(out) >= 3:
+            break
+        if it["tag"] and it not in out and sum(o["tag"] == it["tag"] for o in out) < 2:
+            out.append(it)
     return out[:n]
 
 
@@ -1558,9 +1590,11 @@ ECON_FEEDS = ["https://news.google.com/rss/search?q=economia+(EUA+OR+%22Estados+
               "+OR+petr%C3%B3leo)+economia+when:2d&hl=pt-BR&gl=BR&ceid=BR:pt-419",
               "https://br.investing.com/rss/news_1.rss"]
 ECON_TOPICS = [  # US and world only: Brazil-only stories (Copom, Selic, Ibovespa) are left out
-    ("EUA", r"\bFED\b|WALL STREET|S&P|NASDAQ|DOW JONES|TREASUR|PAYROLL|EUA\b|ESTADOS UNIDOS|AMERICAN|POWELL|TRUMP|CASA BRANCA", "SPX"),
-    ("CHINA", r"CHINA|CHIN[ÊE]S|PEQUIM|XI JINPING", None), ("EUROPA", r"EUROPA|EUROPE|\bBCE\b|ZONA DO EURO|\bEURO\b|ALEMANHA", "EURUSD"),
-    ("JAPÃO", r"JAP[ÃA]O|\bBOJ\b|IENE", "USDJPY"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
+    ("EUA", r"\bFED\b|WALL STREET|S&P|NASDAQ|DOW JONES|TREASUR|PAYROLL|POWELL|"
+            + gated(r"EUA\b|ESTADOS UNIDOS|AMERICAN|TRUMP|CASA BRANCA"), "SPX"),
+    ("CHINA", gated(r"CHINA|CHIN[ÊE]S|PEQUIM|XI JINPING"), None),
+    ("EUROPA", r"\bBCE\b|ZONA DO EURO|\bEURO\b|" + gated(r"EUROPA|EUROPE|ALEMANHA"), "EURUSD"),
+    ("JAPÃO", r"\bBOJ\b|IENE|" + gated(r"JAP[ÃA]O"), "USDJPY"), ("PETRÓLEO", r"PETR[ÓO]LEO|OPEP|BRENT", "WTI"),
     ("OURO", GOLD_RX, "XAUUSD"), ("CRIPTO", r"BITCOIN|CRIPTO", "BTCUSD"),
     ("MUNDO", r"\bFMI\b|BANCO MUNDIAL|ECONOMIA (GLOBAL|MUNDIAL)|TARIFA|COM[ÉE]RCIO (GLOBAL|MUNDIAL|EXTERIOR)|G20|G7\b", None)]
 ECON_DOMESTIC = r"IBOVESPA|\bB3\b|R\$|COPOM|SELIC|IPCA|HADDAD|TESOURO DIRETO"   # Brazil-only market stories
