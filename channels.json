@@ -26,5 +26,19 @@
     "token_env": "TG_BOT_TOKEN",
     "enabled": true,
     "owner_username": "thecr8or"
+  },
+  {
+    "chat": -1003874360802,
+    "title": "Gênio do Forex | VIP",
+    "mode": "relay",
+    "brand": "",
+    "lang": "pt",
+    "markets": null,
+    "dm": "",
+    "signal_source": "AFX",
+    "footer": "",
+    "quiet_hours": [],
+    "token_env": "TG_BOT_TOKEN",
+    "enabled": true
   }
 ]

@@ -11,6 +11,7 @@ Daily content plan for the channel (Brazil time, Mon–Fri, plus a weekend econo
   Sat/Sun 11:00   econ    US and world economy news carousel (the other weekend posts are manual)
 
   python daily.py run HOUR [--live]   build (and with --live post) the slot for that BRT hour
+  python daily.py relay [--live]      relay channels ("mode": "relay"): every new source signal, right away
   python daily.py report              poll history (also written to the GitHub job summary)
 
 Env: TG_BOT_TOKEN (per channel via token_env), OWNER_CHAT_ID (optional, poll reports by DM),
@@ -1664,6 +1665,8 @@ def run(hour, live):
     print(f"  gold futures-spot offset: {basis:.2f} ({S.BASIS_SRC})")
     try:
         for ch in S.load_channels():
+            if ch.get("mode") == "relay":                  # relay channels get only the source's signals (python daily.py relay)
+                continue
             enabled = ch.get("weekend_slots" if table is WEEKEND_SLOTS else "slots")
             if enabled is not None and hour not in enabled:
                 print(f"  {ch['chat']}: slot {hour} not enabled in channels.json"); continue
@@ -1731,12 +1734,144 @@ def run(hour, live):
             save(st)                                     # keep poll results, offsets and posted flags even after an error
 
 
+# ================================================================= relay channels: every source signal, as soon as it is read
+RELAY_FRESH_MIN = int(os.getenv("RELAY_FRESH_MIN", "120"))    # an older source post is never relayed
+UPDATE_RX = (r"\b(TP\s*\d?|SL|BE|STOP|TAKE|PIPS?|CLOSE|CLOSED|HIT)\b|БЕЗУБЫТ|\bБУ\b|ЗАКРЫ|ФИКС|ПЕРЕНОС|ТЕЙК|СТОП|ПУНКТ|"
+             r"ОТМЕН|ВЗЯЛ|ДОБИРА|УСРЕДН|ТЕКУЩ|ВХОДИМ|ДЕРЖИМ")
+
+
+def relay_text_signal(s):
+    """A source signal we cannot chart (no market data): the same levels as text, in the channel's language."""
+    dec = 5 if s["entry"] < 20 else 3 if s["entry"] < 200 else 2
+    risk = abs(s["entry"] - s["sl"]) or 1e-9
+    icon = "🟢" if s["side"] == "BUY" else "🔴"
+    return "\n".join([f"{icon} {S.pname(s['name'])} {S.side_word(s['side'])} {S.T('NOW') if s.get('at_market', True) else S.T('LIMIT')}", "",
+                      f"📍 {S.T('c_entry')}: {S.fmt_p(s['entry'], dec)}", f"🛑 SL: {S.fmt_p(s['sl'], dec)}",
+                      f"🎯 TP1: {S.fmt_p(s['tp1'], dec)}  (1:{abs(s['tp1'] - s['entry']) / risk:.1f})",
+                      f"🏁 TP2: {S.fmt_p(s['tp2'], dec)}  (1:{abs(s['tp2'] - s['entry']) / risk:.1f})", "",
+                      S.T("c_tp1"), "", S.T("c_nfa")])
+
+
+def relay_update_text(text):
+    """A source post that is not a new signal but talks about a trade (TP hit, move SL to entry, close...): the same
+    message in Portuguese, with no names, links or handles. None when it is not about a trade or AI is off."""
+    if not re.search(UPDATE_RX, text.upper()):
+        return None
+    out = ai("Traduza para o português do Brasil esta atualização de uma operação (sinal de trading) publicada em outro canal. "
+             "Mantenha exatamente os números, ativos e níveis. Não acrescente nada, não invente resultados. Remova nomes de "
+             "pessoas e canais, @usuários, links e convites. Responda só com o texto traduzido, curto, no estilo de um canal "
+             "de sinais. Se o texto não for sobre uma operação (for propaganda, convite, saudação ou conversa), responda só: SKIP",
+             text[:1500], 600)
+    return None if not out or out.strip().upper().startswith("SKIP") else out
+
+
+def send_text(ch, text, live):
+    text = utf16_cut(visible(text), 4096)
+    if not live:
+        print(f"  [dry-run] text → {ch['chat']}\n{text}\n"); return {"ok": True, "result": {"message_id": 0}}
+    j = tg_formatted(ch, "sendMessage", lambda fmt: ({"chat_id": ch["chat"], "text": h, "parse_mode": "HTML"}
+                                                   if fmt and (h := safe_rich(text)) is not None else {"chat_id": ch["chat"], "text": text}))
+    print(f"  → {ch['chat']} text: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
+    if not j.get("ok"):
+        S.FAILURES.append(ch["chat"])
+    return j
+
+
+def relay(live):
+    """Every relay channel (channels.json "mode": "relay") gets each new post of the signal source right away: a signal
+    as our chart card (any market; text card when there is no chart data), a trade update translated by AI.
+    The bot's update stream is read once, through the slot channel that shares the token, so neither misses a post."""
+    d, st = load()
+    chans = S.load_channels()
+    relays = [c for c in chans if c.get("mode") == "relay"]
+    if not relays:
+        print("  no relay channels in channels.json"); return
+    basis = S.gold_basis(None, samples=st.get("_gold_spot", []))
+    now = time.time()
+    try:
+        for rc in relays:
+            if not os.getenv(rc["token_env"]):
+                print(f"  ! {rc['chat']}: no bot token ({rc['token_env']})"); continue
+            owner = next((c for c in chans if c.get("mode") != "relay" and c["token_env"] == rc["token_env"]), rc)
+            od = d.setdefault(str(owner["chat"]), {})
+            try:
+                S.use_branding(owner)
+                pull_updates(owner, dict(d=od, live=live, basis=basis, hour=datetime.now(TZ).hour))
+            except Exception as e:
+                print(f"  ! could not read bot updates: {e}")
+            cd = d.setdefault(str(rc["chat"]), {})
+            done = cd.setdefault("relayed", {})
+            S.use_branding(rc)
+            ctx = dict(d=cd, live=live, basis=basis, hour=datetime.now(TZ).hour)
+            sent = []
+            for s in sorted(od.get("src", []), key=lambda s: s["ts"]):
+                key = str(s["id"])
+                if key in done:
+                    continue
+                if now - s["ts"] > RELAY_FRESH_MIN * 60:
+                    print(f"  · source signal {s['id']} {s['name']} is older than {RELAY_FRESH_MIN} min: not relayed")
+                    done[key] = now; continue
+                item, far = None, False
+                try:
+                    tk = next((t for n, t, *_ in S.TA_MARKETS + S.EXTRA_MARKETS if n == s["name"]), None)
+                    last = float(S.load_tf(tk, tf_for(s["name"]))["Close"].iloc[-1]) - (basis if s["name"] == "XAUUSD" else 0.0)
+                    far = abs(s["entry"] / last - 1) > 0.06
+                except Exception as e:
+                    print(f"  · no market data for {s['name']} ({e}): text card")
+                if far:                                       # a misread post or another market: never relay wrong levels
+                    print(f"  ! source signal {s['id']} {s['name']} entry {s['entry']:g} is far from the market: not relayed")
+                    S.FAILURES.append(f"relay {s['name']} {s['id']}")
+                    done[key] = now; continue
+                try:
+                    item = signal_post(rc, ctx, s, source=True)
+                except Exception as e:
+                    print(f"  ! chart for {s['name']} failed: {e}")
+                if item:
+                    p, cap, extra = item
+                    j = send_photo(rc, p, cap, live, ctx["hour"])
+                else:
+                    j = send_text(rc, relay_text_signal(s), live)
+                if j.get("ok") or j.get("duplicate"):
+                    done[key] = now
+                    sent.append(f"{s['name']} {s['side']} {s['entry']:g}")
+                    if item and live and j.get("ok"):
+                        rec = dict(item[2]["signal"], msg_id=j.get("result", {}).get("message_id"), src_id=s["id"])
+                        cd["signals"] = [x for x in cd.get("signals", []) if now - x["ts"] < 7 * 86400] + [rec]
+                time.sleep(1)
+            for r in sorted(od.get("src_raw", []), key=lambda r: r["ts"]):
+                key = f"raw{r['id']}"
+                if key in done or str(r["id"]) in done:
+                    continue
+                done[key] = now
+                if now - r["ts"] > RELAY_FRESH_MIN * 60:
+                    continue
+                txt = relay_update_text(r["text"])
+                if txt:
+                    j = send_text(rc, txt, live)
+                    if j.get("ok"):
+                        sent.append("update: " + txt.splitlines()[0][:60])
+                else:
+                    print(f"  · source post {r['id']} is not a trade update (or AI is off): not relayed")
+            if live:
+                for k in [k for k, t in done.items() if now - t > 4 * 86400]:
+                    del done[k]
+                day = cd.setdefault("log", {}).setdefault(f"{datetime.now(TZ):%Y-%m-%d}", {})
+                if sent:
+                    day.setdefault("relay", []).append(dict(t=now, sent=sent))
+                for k in [k for k in cd["log"] if k < (datetime.now(TZ) - timedelta(days=10)).strftime("%Y-%m-%d")]:
+                    del cd["log"][k]
+            print(f"  {rc['chat']}: relayed {len(sent)}" + (": " + "; ".join(sent) if sent else ""))
+    finally:
+        if live:
+            save(st)
+
+
 HOOK_START = ("📩", "💬", "🔒")
 
 
 def scrub(ids, live):
     """Remove the DM line from published posts (message ids). Reads the caption from the channel's public page."""
-    for ch in S.load_channels():
+    for ch in [c for c in S.load_channels() if c.get("mode") != "relay"]:
         handle = str(ch["chat"]).lstrip("@")
         for mid in ids:
             html = requests.get(f"https://t.me/s/{handle}?before={mid + 1}", headers=S.UA, timeout=30).text
@@ -1837,6 +1972,8 @@ if __name__ == "__main__":
     live = "--live" in a
     if a and a[0] == "run":
         run(int(a[1]) if len(a) > 1 and a[1].isdigit() else datetime.now(TZ).hour, live)
+    elif a and a[0] == "relay":                            # python daily.py relay [--live]
+        relay(live)
     elif a and a[0] == "report":
         report()
     elif a and a[0] == "scrub":                            # python daily.py scrub 19 20 [--live]
@@ -1844,5 +1981,5 @@ if __name__ == "__main__":
     else:
         print(__doc__)
     if S.FAILURES:
-        print(f"\n  ✗ FAILED for: {sorted(set(S.FAILURES))}")
+        print(f"\n  ✗ FAILED for: {sorted(set(map(str, S.FAILURES)))}")
         sys.exit(1)

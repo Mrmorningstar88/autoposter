@@ -25,6 +25,20 @@ Saturday and Sunday (BRT):
 
 See **RULES.md** for the owner's rule book (no repeats, no personal info, never stop, keep the schedule).
 
+## Relay channel: Gênio do Forex | VIP
+
+`channels.json` entry with `"mode": "relay"` (chat `-1003874360802`, same bot @gabifxport_bot). It gets no daily slots: every
+new post of the signal source (AFX | Сигналы) is relayed right away, any market (gold, FX majors and crosses incl. JPY, silver,
+oil, indices, BTC/ETH):
+
+- a signal → our Portuguese chart card with entry, SL, TP1, TP2 (text card if the market has no chart data);
+- a trade update (TP hit, SL to entry, close…) → translated to Portuguese by AI, only when `ANTHROPIC_API_KEY` is set;
+- no signature (`"brand": ""`), no DM line, no footer. Levels more than 6% from the market are never relayed (misread post).
+
+The workflow runs at :07/:27/:47 every hour while forex trades; a run with no slot due checks the bot's unread updates
+(`slots.py relay`, standard library, seconds) and stops if nothing new arrived. Source posts older than 2 hours are not relayed.
+Run it by hand: Actions → Post charts to Telegram → mode `relay`.
+
 ## Setup
 
 1. **Bot token**: repo **Settings → Secrets and variables → Actions → `TG_BOT_TOKEN`**. The bot must be an admin of @sanstostrades.
