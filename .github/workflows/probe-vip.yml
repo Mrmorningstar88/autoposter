@@ -1,0 +1,43 @@
+name: probe-vip (one-off, read-only)
+on:
+  push:
+    branches: [claude/project-thread-8fut3w]
+    paths: [.github/workflows/probe-vip.yml]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Peek bot updates (no offset = nothing is confirmed or deleted)
+        env:
+          PT: ${{ secrets.TG_BOT_TOKEN }}
+          ES: ${{ secrets.TELEGRAM_BOT_ES_TOKEN }}
+        run: |
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.parse
+          def tg(tok, m, **kw):
+              d = urllib.parse.urlencode(kw).encode()
+              try:
+                  return json.load(urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/{m}", d, timeout=30))
+              except Exception as e:
+                  return {"ok": False, "description": str(e)[:100]}
+          for env in ("PT", "ES"):
+              tok = os.getenv(env)
+              if not tok:
+                  print(env, "no secret"); continue
+              me = tg(tok, "getMe").get("result", {})
+              print(f"== {env}: @{me.get('username')}")
+              j = tg(tok, "getUpdates", limit=100, timeout=0,
+                     allowed_updates=json.dumps(["channel_post", "message", "my_chat_member", "poll"]))
+              chats = {}
+              for u in j.get("result", []):
+                  cm = u.get("my_chat_member")
+                  if cm:
+                      c = cm["chat"]
+                      print(f"  member: {cm['new_chat_member']['status']} in '{c.get('title')}' id {c['id']} type {c.get('type')} forum={c.get('is_forum')}")
+                  p = u.get("channel_post") or u.get("message")
+                  if p and p["chat"].get("type") != "private":
+                      c = p["chat"]; chats[c["id"]] = (c.get("title"), c.get("type"), p.get("message_thread_id"))
+              for k, v in chats.items():
+                  print(f"  posts seen in: '{v[0]}' id {k} type {v[1]} thread {v[2]}")
+              print("  pending updates:", len(j.get("result", [])), j.get("description", ""))
+          PY
