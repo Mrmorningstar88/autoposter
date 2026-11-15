@@ -5,16 +5,19 @@ on:
     # GitHub cron is UTC; Brazil (BRT) = UTC-3. Slots 09/11/13/15/19 BRT Mon–Fri, 21 BRT (00 UTC Tue–Sat), 11 BRT Sat–Sun.
     # GitHub drops and delays scheduled runs (worst at :00, its busiest minute), so each slot gets three attempts off the hour; the first one that runs posts it
     # and the others skip (slots.py). 17:00 BRT is posted by hand.
-    - cron: "7,27,47 12,14,16,18,22 * * 1-5"
-    - cron: "7,27,47 0 * * 2-6"
+    # The same attempts every hour while forex trades (Sun 21 UTC – Sat 00 UTC) also relay new source signals to the
+    # relay channels (channels.json "mode": "relay"); a run with no slot due and nothing to relay stops after a 5-second check.
+    - cron: "7,27,47 * * * 1-5"
+    - cron: "7,27,47 0 * * 6"
+    - cron: "7,27,47 21-23 * * 0"
     - cron: "7,27,47 14 * * 0,6"
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto = post whatever slot is due now, once (used by backup timers) · slot = run the chosen slot now · test = post one entry chart · report = poll history · emoji = list animated emoji packs (artifact)"
+        description: "auto = post whatever slot is due now, once (used by backup timers) · relay = relay new source signals to the relay channels now · slot = run the chosen slot now · test = post one entry chart · report = poll history · emoji = list animated emoji packs (artifact)"
         default: "slot"
         type: choice
-        options: [slot, auto, test, report, scrub, emoji]
+        options: [slot, auto, relay, test, report, scrub, emoji]
       hour:
         description: "BRT slot for slot mode"
         default: "9"
@@ -67,23 +70,35 @@ jobs:
             echo "degraded=1" >> "$GITHUB_OUTPUT"
             echo "::warning::saved memory exists but could not be loaded ($N); posting anyway, the channel check prevents repeats, memory is not overwritten"
           fi
-      - name: Pick slot (skip if this slot was already posted)
+      - name: Pick slot (skip if this slot was already posted) and check the relay channels
         id: slot
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         run: |
+          H=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" != "auto" ]; then
-            echo "hour=${{ inputs.hour }}" >> "$GITHUB_OUTPUT"
+            H="${{ inputs.hour }}"
+            echo "hour=$H" >> "$GITHUB_OUTPUT"
           else
             H=$(python3 slots.py due state.json)
             echo "hour=$H" >> "$GITHUB_OUTPUT"
             [ -n "$H" ] && echo "posting the ${H}h slot" || echo "nothing due (already posted or outside a slot window)"
           fi
+          R=""
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.mode }}" = "auto" ] || [ "${{ inputs.mode }}" = "relay" ]; then
+            R=$(python3 slots.py relay state.json || true)
+            [ "${{ inputs.mode }}" = "relay" ] && R=1
+          fi
+          echo "relay=$R" >> "$GITHUB_OUTPUT"
+          [ -n "$R" ] && echo "relay channels: new source posts to relay"
+          [ -n "$H$R" ] && echo "run=1" >> "$GITHUB_OUTPUT" || true
       - uses: actions/setup-python@v5
-        if: steps.slot.outputs.hour != ''
+        if: steps.slot.outputs.run != ''
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
-        if: steps.slot.outputs.hour != ''
+        if: steps.slot.outputs.run != ''
       - name: Check bot access
         if: steps.slot.outputs.hour != ''
         continue-on-error: true            # diagnostic only: a hiccup here must never stop the post
@@ -91,7 +106,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         run: python scrape.py channels
       - name: Post
-        if: steps.slot.outputs.hour != ''
+        if: steps.slot.outputs.run != ''
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
@@ -105,7 +120,13 @@ jobs:
             workflow_dispatch/report) python daily.py report ;;
             workflow_dispatch/scrub)  python daily.py scrub ${{ inputs.message_ids }} $LIVE ;;
             workflow_dispatch/emoji)  python emoji_catalog.py ${{ inputs.message_ids }} ;;
-            *)                        python daily.py run ${{ steps.slot.outputs.hour }} $LIVE ;;
+            workflow_dispatch/relay)  python daily.py relay $LIVE ;;
+            *)  RC=0
+                [ -n "${{ steps.slot.outputs.hour }}" ] && { python daily.py run ${{ steps.slot.outputs.hour }} $LIVE || RC=1; }
+                if [ -n "${{ steps.slot.outputs.relay }}" ] || [ "${{ github.event_name }}" = "schedule" ]; then
+                  python daily.py relay $LIVE || RC=1          # after a slot too: its update read may have brought a signal
+                fi
+                exit $RC ;;
           esac
       - name: Send poll report to the "Poll reports" issue
         if: always() && hashFiles('report.md') != ''
@@ -122,7 +143,7 @@ jobs:
           fi
           [ -n "$NUM" ] && gh issue comment "$NUM" -R "$R" --body-file report.md
       - name: Save memory
-        if: always() && steps.slot.outputs.hour != '' && steps.guard.outputs.degraded != '1' && inputs.mode != 'emoji'   # skipped or degraded runs never overwrite it
+        if: always() && steps.slot.outputs.run != '' && steps.guard.outputs.degraded != '1' && inputs.mode != 'emoji'   # skipped or degraded runs never overwrite it
         uses: actions/cache/save@v4
         with:
           path: state.json

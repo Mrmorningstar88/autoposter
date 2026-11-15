@@ -132,7 +132,10 @@ def cmd_scrape(max_posts=200):
 # ================================================================= 2. CLASSIFY + EXTRACT
 INSTR = [("XAUUSD", r"\b(XAU\s*/?\s*USD|GOLD|ORO|ЗОЛОТ\w*)\b"), ("EURUSD", r"\bEUR\s*/?\s*USD\b"),
          ("GBPUSD", r"\bGBP\s*/?\s*USD\b"), ("USDJPY", r"\bUSD\s*/?\s*JPY\b"), ("BTCUSD", r"\b(BTC|BITCOIN|БИТКОИН)\w*"),
-         ("US30", r"\b(US30|DOW)\b"), ("NAS100", r"\b(NAS100|NASDAQ|US100)\b"), ("XAGUSD", r"\b(XAG\s*/?\s*USD|SILVER|СЕРЕБР\w*)\b")]
+         ("US30", r"\b(US30|DOW)\b"), ("NAS100", r"\b(NAS100|NASDAQ|US100)\b"), ("XAGUSD", r"\b(XAG\s*/?\s*USD|SILVER|СЕРЕБР\w*)\b"),
+         ("BRENT", r"\b(BRENT|UKOIL|XBR\s*/?\s*USD)\b"), ("WTI", r"\b(USOIL|WTI|XTI\s*/?\s*USD|CRUDE|OIL|НЕФТ\w*)\b"),
+         ("ETHUSD", r"\b(ETH|ETHEREUM|ЭФИР\w*)\b"), ("US500", r"\b(US500|SPX500|SP500|S&P\s*500)\b"),
+         ("GER40", r"\b(GER40|GER30|DE40|DAX)\b"), ("UK100", r"\b(UK100|FTSE)\b"), ("JP225", r"\b(JP225|JPN225|NIKKEI)\b")]
 CATS = [  # first match wins
     ("personal/story", r"(MY DAUGHTER|MY SON|MY WIFE|BIRTHDAY|MY FAMILY|HIJA|HIJO|CUMPLEAÑOS|MI FAMILIA|ДОЧ|СЫН|ЖЕН|ДЕНЬ РОЖДЕНИЯ|ИСПОЛНИЛОСЬ|ПАПОЙ|ОПЕРАЦИ|RETIRAR|WITHDRAW|ВЫВЕЛ|ВЫВОД)"),
     ("giveaway/contest", r"(GIVEAWAY|REGALAR|REGALO|SORTEO|РОЗЫГРЫШ|ПОДАР|PRIZE|BATTLE|CONTEST|COMPETITION)"),
@@ -577,7 +580,9 @@ def cmd_charts():
 TA_MARKETS = [("XAUUSD", "GC=F", 0.1, 2), ("EURUSD", "EURUSD=X", 0.0001, 5), ("GBPUSD", "GBPUSD=X", 0.0001, 5)]
 # extra instruments a forwarded signal may use (not part of the own-analysis rotation)
 EXTRA_MARKETS = [("USDJPY", "USDJPY=X", 0.01, 3), ("XAGUSD", "SI=F", 0.01, 3), ("BTCUSD", "BTC-USD", 1.0, 0),
-                 ("US30", "YM=F", 1.0, 0), ("NAS100", "NQ=F", 1.0, 0)]
+                 ("US30", "YM=F", 1.0, 0), ("NAS100", "NQ=F", 1.0, 0),
+                 ("WTI", "CL=F", 0.01, 2), ("BRENT", "BZ=F", 0.01, 2), ("ETHUSD", "ETH-USD", 0.1, 1), ("US500", "ES=F", 0.1, 1),
+                 ("GER40", "^GDAXI", 1.0, 0), ("UK100", "^FTSE", 1.0, 0), ("JP225", "^N225", 1.0, 0)]
 TA_JOBS = [("XAUUSD", "1h", 70), ("XAUUSD", "15m", 70), ("EURUSD", "1h", 70), ("GBPUSD", "1h", 70)]
 CHART_STYLE = os.getenv("CHART_STYLE", "clean")      # "clean" = simple entry chart (default) · "pro" = full structure chart
 
@@ -1086,7 +1091,8 @@ def cmd_ta(rows=None):
 CLEAN = dict(bg="#0E1525", panel="#0E1525", grid="#1A2438", text="#F2F5FA", muted="#8C98AE",
              buy="#22C38E", sell="#F0506E", gold="#F2B33D")
 NAMES = {"XAUUSD": "GOLD", "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "USD/JPY", "XAGUSD": "PRATA",
-         "BTCUSD": "BITCOIN", "US30": "DOW JONES", "NAS100": "NASDAQ"}
+         "BTCUSD": "BITCOIN", "US30": "DOW JONES", "NAS100": "NASDAQ",
+         "WTI": "WTI", "BRENT": "BRENT", "ETHUSD": "ETHEREUM", "US500": "S&P 500", "GER40": "DAX", "UK100": "FTSE 100", "JP225": "NIKKEI"}
 LANG = os.getenv("LANG_CODE", "en")                  # set per channel via channels.json "lang": "en" | "pt"
 PT_MONTHS = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
 TXT = {
@@ -1262,8 +1268,10 @@ def chart_clean(name, tf, bars, basis=0.0, plan=None):
     else:
         fig.text(0.06, 0.2, T("no_setup"), fontsize=13, color=CLEAN["text"])
     fig.text(0.06, 0.07, T("footer"), fontsize=9.5, va="top", linespacing=1.5, color=CLEAN["muted"])
-    fig.text(0.94, 0.055, BRAND, fontsize=12, color=CLEAN["gold"], fontweight="bold", ha="right")
-    fig.text(0.94, 0.03, HANDLE, fontsize=9.5, color=CLEAN["muted"], ha="right")
+    if BRAND:                                           # empty brand/handle = an unbranded card (relay channels)
+        fig.text(0.94, 0.055, BRAND, fontsize=12, color=CLEAN["gold"], fontweight="bold", ha="right")
+    if HANDLE:
+        fig.text(0.94, 0.03, HANDLE, fontsize=9.5, color=CLEAN["muted"], ha="right")
     p = save_clean(fig, f"entry_{name}_{tf}{'' if LANG == 'en' else '_' + LANG}.png")
     return p, clean_caption(name, tf, res, dec, pip), res
 
@@ -1358,23 +1366,23 @@ FAILURES = []                                        # any problem here makes th
 
 def cmd_channels_check():
     """Verify the bot can post in every configured channel."""
-    for ch in load_channels():
+    for ch in [c for c in load_channels() if c.get("mode") != "relay"]:
         ok_before = len(FAILURES); FAILURES.append(ch["chat"])  # removed again below if the channel is ready
         token = os.getenv(ch["token_env"])
         if not token:
-            print(f"  {ch['chat']:24s} ✗ env {ch['token_env']} not set"); continue
+            print(f"  {str(ch['chat']):24s} ✗ env {ch['token_env']} not set"); continue
         me = tg(token, "getMe")
         if not me.get("ok"):
-            print(f"  {ch['chat']:24s} ✗ bad token: {me.get('description')}"); continue
+            print(f"  {str(ch['chat']):24s} ✗ bad token: {me.get('description')}"); continue
         chat = tg(token, "getChat", data={"chat_id": ch["chat"]})
         if not chat.get("ok"):
-            print(f"  {ch['chat']:24s} ✗ bot can't see channel ({chat.get('description')}) — add @{me['result']['username']} as admin"); continue
+            print(f"  {str(ch['chat']):24s} ✗ bot can't see channel ({chat.get('description')}) — add @{me['result']['username']} as admin"); continue
         mem = tg(token, "getChatMember", data={"chat_id": ch["chat"], "user_id": me["result"]["id"]})
         r = mem.get("result", {})
         can = r.get("status") == "creator" or (r.get("status") == "administrator" and r.get("can_post_messages", True))
         if can:
             del FAILURES[ok_before:]
-        print(f"  {ch['chat']:24s} {'✓ ready' if can else '✗ bot is not an admin with Post Messages'}  "
+        print(f"  {str(ch['chat']):24s} {'✓ ready' if can else '✗ bot is not an admin with Post Messages'}  "
               f"({chat['result'].get('title')}, bot @{me['result']['username']})")
 
 
@@ -1404,7 +1412,10 @@ def post_to(ch, items, live, hour=None):
 
 def use_branding(ch):
     global BRAND, HANDLE, LANG
-    BRAND, HANDLE = ch.get("brand") or BRAND, ch["chat"] if str(ch["chat"]).startswith("@") else HANDLE
+    if "brand" in ch and not ch["brand"]:              # "brand": "" = no signature on the cards at all
+        BRAND, HANDLE = "", ""
+    else:
+        BRAND, HANDLE = ch.get("brand") or BRAND, ch["chat"] if str(ch["chat"]).startswith("@") else HANDLE
     LANG = ch.get("lang") or "en"
 
 
@@ -1479,7 +1490,7 @@ def cmd_slot(hour=None, live=False):
 
     slot = SCHEDULE.get(hour)
     print(f"  {hour:02d}:00 {TZ_LABEL} · {slot['why'] if slot else 'no slot'}")
-    for ch in load_channels():
+    for ch in [c for c in load_channels() if c.get("mode") != "relay"]:
         use_branding(ch)
         items = build_slot(hour, ch, basis, rows_ready)
         if not items:
@@ -1490,7 +1501,7 @@ def cmd_slot(hour=None, live=False):
 def cmd_test(live=False):
     """Connection test: post the best setup available right now (or a WAIT chart) to every channel."""
     basis = gold_basis(None)
-    for ch in load_channels():
+    for ch in [c for c in load_channels() if c.get("mode") != "relay"]:
         use_branding(ch)
         pick = None
         for name, tf in [(m, t) for m, _, _, _ in TA_MARKETS for t in ("1h", "15m")]:
@@ -1509,7 +1520,7 @@ def cmd_post(live=False):
     """Post the charts already in charts/captions.json to every configured channel."""
     caps = json.load(open(os.path.join(CHART_DIR, "captions.json")))
     items = [(os.path.join(CHART_DIR, fn), cap) for fn, cap in caps.items()]
-    for ch in load_channels():
+    for ch in [c for c in load_channels() if c.get("mode") != "relay"]:
         post_to(ch, items, live)
 
 
@@ -1537,5 +1548,5 @@ if __name__ == "__main__":
     if a[0] == "slot":                                        # python scrape.py slot [hour] [--live]
         cmd_slot(int(a[1]) if len(a) > 1 and a[1].isdigit() else None, live)
     if FAILURES:
-        print(f"\n  ✗ FAILED for: {sorted(set(FAILURES))}")
+        print(f"\n  ✗ FAILED for: {sorted(set(map(str, FAILURES)))}")
         sys.exit(1)
