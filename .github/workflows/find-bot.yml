@@ -1,4 +1,4 @@
-name: Find afxspainbot token (one-off check)
+name: Find afxspainbot source (one-off check)
 on:
   push:
     branches: [claude/project-thread-lyq11t]
@@ -9,36 +9,49 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - name: getMe for every secret that looks like a bot token (prints names, never values)
+      - uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: post-state-none
+          restore-keys: post-state-
+      - name: Read source info and check the Spanish bot there (prints no tokens)
         env:
-          ALL: ${{ toJSON(secrets) }}
+          ES: ${{ secrets.TELEGRAM_BOT_ES_TOKEN }}
         run: |
           python3 - <<'PY'
-          import json, os, re, urllib.request
-          def tg(tok, m):
+          import json, os, urllib.request, urllib.parse
+          def tg(m, **q):
               try:
-                  return json.load(urllib.request.urlopen(f"https://api.telegram.org/bot{tok}/{m}", timeout=20))
+                  return json.load(urllib.request.urlopen(f"https://api.telegram.org/bot{os.environ['ES']}/{m}?" + urllib.parse.urlencode(q), timeout=20))
               except Exception as e:
-                  return {"ok": False, "err": type(e).__name__}
-          s = json.loads(os.environ["ALL"])
-          for name, val in sorted(s.items()):
-              val = (val or "").strip()
-              if not re.fullmatch(r"\d{6,12}:[A-Za-z0-9_-]{30,}", val):
-                  continue
-              me = tg(val, "getMe")
-              user = me.get("result", {}).get("username") if me.get("ok") else None
-              print(f"{name}: {'@'+user if user else 'INVALID'}")
-              if user and "spain" in user.lower():
-                  wh = tg(val, "getWebhookInfo").get("result", {})
-                  print(f"  webhook set: {bool(wh.get('url'))}, pending: {wh.get('pending_update_count')}")
-                  up = tg(val, "getUpdates")
-                  chats = {}
-                  for u in up.get("result", []):
-                      for k in ("message", "channel_post", "my_chat_member", "edited_message", "chat_member"):
-                          c = (u.get(k) or {}).get("chat")
-                          if c: chats[c["id"]] = (c.get("type"), c.get("title") or c.get("username"), c.get("is_forum"))
-                  for cid, v in chats.items():
-                      print(f"  chat {cid}: {v}")
-                      st = tg(val, f"getChatMember?chat_id={cid}&user_id={me['result']['id']}")
-                      print(f"    bot status: {st.get('result', {}).get('status')}")
+                  return {"ok": False, "err": str(e)[:100]}
+          st = json.load(open("state.json")) if os.path.exists("state.json") else {}
+          print("top keys:", list(st)[:30])
+          chans = st.get("channels", st)
+          def walk(o, path=""):
+              if isinstance(o, dict):
+                  for k, v in o.items():
+                      if k in ("source_seen",): print(path + k, v)
+                      if k == "src": print(path + "src (last 5):", json.dumps(v[-5:], ensure_ascii=False))
+                      if k == "src_raw": print(path + "src_raw (last 3):", json.dumps(v[-3:], ensure_ascii=False)[:1500])
+                      walk(v, path + k + ".")
+          walk(st)
+          me = tg("getMe")["result"]
+          ids = set()
+          def collect(o):
+              if isinstance(o, dict):
+                  if "source_seen" in o and isinstance(o["source_seen"], dict): ids.add(o["source_seen"].get("id"))
+                  for v in o.values(): collect(v)
+          collect(st)
+          for cid in ids:
+              c = tg("getChat", chat_id=cid)
+              print("source", cid, "getChat ok:", c.get("ok"), c.get("result", {}).get("title"), c.get("description"))
+              m = tg("getChatMember", chat_id=cid, user_id=me["id"])
+              print("  spanish bot status there:", m.get("result", {}).get("status"), m.get("description"))
+          up = tg("getUpdates", allowed_updates=json.dumps(["message","channel_post","my_chat_member","chat_member"]))
+          print("updates:", len(up.get("result", [])))
+          for u in up.get("result", []):
+              for k, v in u.items():
+                  if isinstance(v, dict) and "chat" in v:
+                      print(" ", k, v["chat"].get("id"), v["chat"].get("type"), v["chat"].get("title"))
           PY
