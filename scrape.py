@@ -1339,12 +1339,23 @@ DEFAULT_CHANNEL = {"chat": os.getenv("TG_CHANNEL", "@yourchannel"), "brand": BRA
                    "footer": "", "quiet_hours": [22, 23, 0, 1, 2, 3, 4, 5, 6], "token_env": "TG_BOT_TOKEN", "enabled": True}
 
 
+def _from_env(v):
+    """channels.json values written as "$NAME" come from the environment (GitHub secrets), so private ids and names
+    stay out of the public repo and are masked in run logs."""
+    if isinstance(v, str) and v.startswith("$") and len(v) > 1:
+        val = os.getenv(v[1:], "").strip()
+        return int(val) if val.lstrip("-").isdigit() else val
+    return v
+
+
 def load_channels():
     if not os.path.exists(CHANNELS_FILE):
         return [dict(DEFAULT_CHANNEL)]
     out = []
     for c in json.load(open(CHANNELS_FILE)):
-        ch = dict(DEFAULT_CHANNEL); ch.update(c)
+        ch = dict(DEFAULT_CHANNEL); ch.update({k: _from_env(v) for k, v in c.items()})
+        if ch["chat"] in ("", None):
+            print("  ! a channel's chat id secret is not set: channel skipped"); continue
         if ch["enabled"]:
             out.append(ch)
     return out
