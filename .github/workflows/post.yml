@@ -74,6 +74,7 @@ jobs:
         id: slot
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
         run: |
           H=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" != "auto" ]; then
@@ -104,11 +105,13 @@ jobs:
         continue-on-error: true            # diagnostic only: a hiccup here must never stop the post
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
         run: python scrape.py channels
       - name: Post
         if: steps.slot.outputs.run != ''
         env:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
           OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MPLBACKEND: Agg
@@ -167,6 +170,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
           OWNER_CHAT_ID: ${{ secrets.OWNER_CHAT_ID }}
         run: |
           URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

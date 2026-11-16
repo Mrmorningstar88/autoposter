@@ -33,6 +33,7 @@ import slots
 TZ = S.TZ
 C = S.CLEAN
 TILE = "#16203A"
+SHOW = os.getenv("SHOW_CAPTIONS") == "1"                # dry-run captions in the log (the repo and its logs are public)
 FRESH_MIN = int(os.getenv("SIGNAL_FRESH_MIN", "90"))   # a source signal older than this is never forwarded
 AI_MODEL = os.getenv("AI_MODEL", "claude-opus-5-5")
 WEEKDAYS = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
@@ -408,7 +409,7 @@ def send_photo(ch, path, cap, live, hour):
         print(f"  · {os.path.basename(path)}: same content is already in the channel, not posted again")
         return {"ok": False, "duplicate": True}
     if not live:
-        print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}\n{cap}\n  html: {safe_rich(cap)}\n")
+        print(f"  [dry-run] → {ch['chat']} {os.path.basename(path)}\n{cap if SHOW else '(caption hidden in public logs)'}\n")
         return {"ok": True, "result": {"message_id": 0}}
     silent = hour in (ch.get("quiet_hours") or [])
     with open(path, "rb") as f:
@@ -426,7 +427,7 @@ def send_album(ch, paths, cap, live, hour):
         print("  · album: same content is already in the channel, not posted again")
         return {"ok": False, "duplicate": True}
     if not live:
-        print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap}\n  html: {safe_rich(cap)}\n")
+        print(f"  [dry-run] album → {ch['chat']} {[os.path.basename(p) for p in paths]}\n{cap if SHOW else '(caption hidden in public logs)'}\n")
         return {"ok": True}
     files = {f"f{i}": open(p, "rb") for i, p in enumerate(paths[:10])}
     silent = hour in (ch.get("quiet_hours") or [])
@@ -984,7 +985,7 @@ def instrument_of(t):
 
 def parse_signal(text):
     """Forex signal text (EN/RU/PT) -> dict(name, side, entry, sl, tp1, tp2, at_market) or None.
-    Handles AFX's format: 'SELL XAU/USD · 📍 4182 - 4184 · Stop loss (SL): 4202 · Take profit 1: 4179 …'."""
+    Handles the source's format: 'SELL XAU/USD · 📍 4182 - 4184 · Stop loss (SL): 4202 · Take profit 1: 4179 …'."""
     t = re.sub(r"(?<=\d),(?=\d)", ".", text.upper()).replace("📍", " ENTRY ")
     for rx, rep in RU:
         t = re.sub(rx, rep, t)
@@ -1019,7 +1020,10 @@ def pull_updates(ch, ctx):
     d, token = ctx["d"], os.getenv(ch["token_env"])
     if not token:
         return
-    want = str(ch.get("signal_source") or "AFX").lower()
+    want = str(ch.get("signal_source") or "").lower()
+    if not want:
+        print("  ! no signal source set (secret SIGNAL_SOURCE): source posts are ignored")
+        want = "\0"
     targets = {str(c["chat"]).lstrip("@").lower() for c in S.load_channels()}
     off = d.get("offset", 0)
     for _ in range(20):                                   # page through backlogs (busy polls), at most 2000 updates
@@ -1039,7 +1043,7 @@ def pull_updates(ch, ctx):
             m = u.get("message")
             if m and m.get("chat", {}).get("type") == "private":
                 who = str(m["chat"].get("username", "")).lower()
-                print(f"  · private message from @{who} — chat id {m['chat']['id']}")
+                print("  · private message to the bot")
                 if who and who == str(ch.get("owner_username", "")).lstrip("@").lower() and ctx["live"]:
                     if d.get("owner_id") != m["chat"]["id"]:
                         S.tg(token, "sendMessage", data={"chat_id": m["chat"]["id"], "text":
@@ -1049,7 +1053,7 @@ def pull_updates(ch, ctx):
                 continue
             cm = u.get("my_chat_member")
             if cm:
-                print(f"  · bot is now '{cm['new_chat_member']['status']}' in {cm['chat'].get('title')} (id {cm['chat']['id']})")
+                print(f"  · bot membership changed: now '{cm['new_chat_member']['status']}' in a {cm['chat'].get('type')}")
                 continue
             post = u.get("channel_post")
             if not post:
@@ -1058,16 +1062,16 @@ def pull_updates(ch, ctx):
             if str(chat.get("username", "")).lower() in targets:
                 continue
             if want not in (str(chat["id"]), str(chat.get("title", "")).lower()) and want not in str(chat.get("title", "")).lower():
-                print(f"  · ignored post from {chat.get('title')} (id {chat['id']}): not the signal source '{want}'")
+                print("  · ignored a post from another channel")
                 continue
             d["source_seen"] = dict(title=chat.get("title"), id=chat["id"], ts=post["date"])
             sig = parse_signal(post.get("text") or post.get("caption") or "")
-            print(f"  · source post {post['message_id']} from {chat.get('title')}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
+            print(f"  · source post {post['message_id']}: {'signal ' + sig['name'] + ' ' + sig['side'] if sig else 'no signal'}")
             if not sig and (post.get("text") or post.get("caption")):
                 d.setdefault("src_raw", []).append(dict(id=post["message_id"], ts=post["date"], text=post.get("text") or post.get("caption")))
             if not sig:                                   # private run log only: lets the parser be fixed for new formats
                 raw = (post.get("text") or post.get("caption") or "[no text: " + ",".join(k for k in post if k in ("photo", "video", "document", "poll")) + "]")
-                print("    raw: " + raw[:400].replace("\n", " ⏎ "))
+                print(f"    not parsed ({len(raw)} chars, kept in memory for a later parser)")
             if sig:
                 d.setdefault("src", []).append(dict(sig, ts=post["date"], id=post["message_id"], posted=False))
         if len(j["result"]) < 100 or not ctx["live"]:   # a dry run never pages: a higher offset deletes updates
@@ -1768,7 +1772,7 @@ def relay_update_text(text):
 def send_text(ch, text, live):
     text = utf16_cut(visible(text), 4096)
     if not live:
-        print(f"  [dry-run] text → {ch['chat']}\n{text}\n"); return {"ok": True, "result": {"message_id": 0}}
+        print(f"  [dry-run] text → {ch['chat']}\n{text if SHOW else '(text hidden in public logs)'}\n"); return {"ok": True, "result": {"message_id": 0}}
     j = tg_formatted(ch, "sendMessage", lambda fmt: ({"chat_id": ch["chat"], "text": h, "parse_mode": "HTML"}
                                                    if fmt and (h := safe_rich(text)) is not None else {"chat_id": ch["chat"], "text": text}))
     print(f"  → {ch['chat']} text: {'ok' if j.get('ok') else 'FAILED ' + str(j.get('description'))}")
@@ -1938,8 +1942,8 @@ def day_report(ch, cd, date=None):
         lines.append(f"Last closed poll ({p['date']}): {p['total']} voters" + (f", winner {A[top[0][0]]['label']}" if p["winner"] else ""))
     src = [x for x in cd.get("src", []) if datetime.fromtimestamp(x["ts"], TZ).strftime("%Y-%m-%d") == date]
     seen = cd.get("source_seen")
-    lines.append(f"AFX signals read today: {len(src)}, forwarded: {sum(1 for x in src if x.get('posted'))}"
-                 + ("" if seen else " (no AFX post seen yet)"))
+    lines.append(f"Source signals read today: {len(src)}, forwarded: {sum(1 for x in src if x.get('posted'))}"
+                 + ("" if seen else " (no source post seen yet)"))
     es = cd.get("emoji_status")
     if es:
         lines.append("Animated emoji: showing ✨" if es["kept"] else

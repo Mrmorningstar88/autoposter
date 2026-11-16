@@ -25,10 +25,10 @@ Saturday and Sunday (BRT):
 
 See **RULES.md** for the owner's rule book (no repeats, no personal info, never stop, keep the schedule).
 
-## Relay channel: Gênio do Forex | VIP
+## Relay channel (VIP)
 
-`channels.json` entry with `"mode": "relay"` (chat `-1003874360802`, same bot @gabifxport_bot). It gets no daily slots: every
-new post of the signal source (AFX | Сигналы) is relayed right away, any market (gold, FX majors and crosses incl. JPY, silver,
+`channels.json` entry with `"mode": "relay"` (same bot). It gets no daily slots: every
+new post of the signal source (the source channel) is relayed right away, any market (gold, FX majors and crosses incl. JPY, silver,
 oil, indices, BTC/ETH):
 
 - a signal → our Portuguese chart card with entry, SL, TP1, TP2 (text card if the market has no chart data);
@@ -39,10 +39,16 @@ The workflow runs at :07/:27/:47 every hour while forex trades; a run with no sl
 (`slots.py relay`, standard library, seconds) and stops if nothing new arrived. Source posts older than 2 hours are not relayed.
 Run it by hand: Actions → Post charts to Telegram → mode `relay`.
 
+## Public repo
+
+The repo is public (free Actions minutes). Private values live in secrets and `channels.json` refers to them as `"$NAME"`:
+`OWNER_USERNAME` (optional). Logs never print source texts, chat titles or ids; dry runs hide captions
+unless `SHOW_CAPTIONS=1`.
+
 ## Setup
 
 1. **Bot token**: repo **Settings → Secrets and variables → Actions → `TG_BOT_TOKEN`**. The bot must be an admin of @sanstostrades.
-2. **Signal source**: add the same bot as an admin of the source channel (AFX | Сигналы). `signal_source` in `channels.json` is matched against the source channel's title or id.
+2. **Signal source**: add the same bot as an admin of the source channel. `signal_source` in `channels.json` is matched against the source channel's title or id.
 3. **DM line**: the public handle for DM requests goes in `channels.json` → `"dm"` (empty = no DM line). Never a personal account.
 4. **Poll reports and alerts by Telegram**: open the bot in Telegram and press **Start** (as the `dm` handle). The next run learns your chat id automatically. Reports are also posted as comments on the "📊 Relatório de enquetes" issue.
 5. **AI copywriting** (optional): add the secret `ANTHROPIC_API_KEY`. Without it every post uses the built-in Portuguese templates.

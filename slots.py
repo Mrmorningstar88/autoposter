@@ -41,7 +41,8 @@ def relay_due(state, channels="channels.json"):
     relay channels have not had yet? Peeking at getUpdates with the saved offset deletes nothing that is unread."""
     import urllib.parse, urllib.request
     try:
-        chans = [c for c in json.load(open(channels)) if c.get("enabled", True)]
+        env = lambda v: os.getenv(v[1:], "") if isinstance(v, str) and v.startswith("$") else v   # "$NAME" = a secret
+        chans = [{k: env(v) for k, v in c.items()} for c in json.load(open(channels)) if c.get("enabled", True)]
     except Exception:
         return False
     relays = [c for c in chans if c.get("mode") == "relay"]

@@ -5,7 +5,7 @@ These rules override everything else in this repository. Any change must keep th
 1. **Never post the same content twice.**
    - A slot posts once per day: it is marked done in memory and every later attempt for it stops (`slots.py`).
    - A trade setup is posted once: a new signal with the same instrument and side and an entry within 0.15% of one
-     posted in the last 24 hours counts as a repeat and is skipped (own setups and AFX signals alike).
+     posted in the last 24 hours counts as a repeat and is skipped (own setups and source signals alike).
    - A signal result is posted once, and never for a signal whose post was deleted from the channel.
    - One open setup per market: no new own setup on a market whose last setup (from the past 24 hours) has no result yet.
    - A news story is used in one carousel only (remembered for 10 days).
