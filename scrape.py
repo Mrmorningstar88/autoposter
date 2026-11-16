@@ -1013,8 +1013,9 @@ def spot_now():
 def sample_basis(samples, fut=None):
     """Gold futures minus spot from the spot prices saved by earlier runs, each set against the GC=F 1-minute bar of
     the same moment (Yahoo's futures arrive about 10 minutes late, so only earlier samples can be matched). Up to the 6
-    newest matches; those more than $1 from the newest three (an older level, or a contract roll) are left out. None
-    with fewer than 3 matches."""
+    newest matches; those more than $3 from the newest three (an older level, or a contract roll, which moves it by $10
+    or more) are left out. None with fewer than 3 matches. ($3, not $1: near expiry the gap sits around zero and two
+    1-minute readings of it differ by a dollar or two, which left the offset unmeasured for days.)"""
     fut = load_tf("GC=F", "1m") if fut is None else fut
     starts = [t.tz_convert("UTC").to_pydatetime() for t in fut.index]
     diffs = []
@@ -1030,7 +1031,7 @@ def sample_basis(samples, fut=None):
     if len(diffs) < 3:
         return None
     anchor = st.median(diffs[:3])                     # the newest samples lead: the gap moves by dollars in a day
-    keep = [x for x in diffs if abs(x - anchor) <= 1.0]
+    keep = [x for x in diffs if abs(x - anchor) <= 3.0]
     if len(keep) < 3:
         print(f"  · gold spot samples disagree (newest first): {', '.join(f'{x:.2f}' for x in diffs)}")
         return None
@@ -1043,9 +1044,11 @@ def gold_basis(rows=None, last=None, samples=None):
     "_gold_basis" by daily.run); else estimated from recent channel signals; else the default."""
     global BASIS_SRC
     mem = _state() if last is None or samples is None else {}
+    old = None                                        # measured more than 4 days ago: still closer than the default
     if last is None:
         gb = mem.get("_gold_basis") or {}
         last = gb.get("b") if time.time() - gb.get("t", 0) < 4 * 86400 else None
+        old = gb.get("b")
     if samples is None:
         samples = mem.get("_gold_spot") or []
     if os.getenv("GOLD_BASIS"):
@@ -1068,6 +1071,9 @@ def gold_basis(rows=None, last=None, samples=None):
             return b
     except Exception:
         pass
+    if old is not None:
+        BASIS_SRC = "last measured, over 4 days ago"
+        return float(old)
     BASIS_SRC = "default"
     return DEFAULT_GOLD_BASIS
 
