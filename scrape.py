@@ -808,7 +808,7 @@ def sessions(idx):
 
 
 def fmt_p(x, dec):
-    return f"{x:.{dec}f}" if LANG == "pt" else f"{x:,.{dec}f}"
+    return f"{x:.{dec}f}" if LANG in ("pt", "es") else f"{x:,.{dec}f}"
 
 
 def chart_analyst(name, tf, bars, basis=0.0):
@@ -1095,6 +1095,7 @@ NAMES = {"XAUUSD": "GOLD", "EURUSD": "EUR/USD", "GBPUSD": "GBP/USD", "USDJPY": "
          "WTI": "WTI", "BRENT": "BRENT", "ETHUSD": "ETHEREUM", "US500": "S&P 500", "GER40": "DAX", "UK100": "FTSE 100", "JP225": "NIKKEI"}
 LANG = os.getenv("LANG_CODE", "en")                  # set per channel via channels.json "lang": "en" | "pt"
 PT_MONTHS = ["", "jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+ES_MONTHS = ["", "ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 TXT = {
     "en": {"GOLD": "GOLD", "BUY": "BUY", "SELL": "SELL", "NOW": "NOW", "LIMIT": "LIMIT", "WAIT": "WAIT", "chart": "{tf} chart",
            "zone": "{side} ZONE", "ENTRY": "ENTRY", "STOP LOSS": "STOP LOSS", "last_n": "Last {n} candles",
@@ -1116,6 +1117,16 @@ TXT = {
            "c_entry": "Entrada", "c_tp1": "Quando o TP1 bater, mova o SL para a entrada.",
            "c_nfa": "⚠️ Não é recomendação de investimento. Arrisque no máximo 1% por operação.",
            "c_wait": "Sem setup claro agora. Aguardando direção.", "c_nfa_short": "⚠️ Não é recomendação de investimento."},
+    "es": {"GOLD": "ORO", "BUY": "COMPRA", "SELL": "VENTA", "NOW": "AHORA", "LIMIT": "LÍMITE", "WAIT": "ESPERAR", "chart": "Gráfico {tf}",
+           "zone": "ZONA DE {side}", "ENTRY": "ENTRADA", "STOP LOSS": "STOP LOSS", "last_n": "Últimas {n} velas",
+           "limit order": "orden límite", "at market": "a mercado", "pips_risk": "{p} pips de riesgo",
+           "up": "alza", "down": "baja", "reason": "Precio en tendencia de {trend} en {tf}. Entrada {where}.",
+           "where_buy": "en un retroceso a la zona de abajo", "where_sell": "en un rebote a la zona de arriba", "where_now": "al precio actual",
+           "no_setup": "Sin setup claro ahora. Esperando que el precio defina la dirección.",
+           "footer": "Mueve el SL a la entrada cuando toque el TP1 · riesgo máx. 1%\nNo es recomendación de inversión",
+           "c_entry": "Entrada", "c_tp1": "Cuando toque el TP1, mueve el SL a la entrada.",
+           "c_nfa": "⚠️ No es recomendación de inversión. Arriesga como máximo 1% por operación.",
+           "c_wait": "Sin setup claro ahora. Esperando dirección.", "c_nfa_short": "⚠️ No es recomendación de inversión."},
 }
 
 
@@ -1130,7 +1141,9 @@ def pname(name):
 
 def stamp():
     d = datetime.now(TZ)
-    return f"{d.day:02d} {PT_MONTHS[d.month]}, {d:%H:%M}" if LANG == "pt" else f"{d:%d %b, %H:%M}"
+    if LANG in ("pt", "es"):
+        return f"{d.day:02d} {(PT_MONTHS if LANG == 'pt' else ES_MONTHS)[d.month]}, {d:%H:%M}"
+    return f"{d:%d %b, %H:%M}"
 
 
 def side_word(side):

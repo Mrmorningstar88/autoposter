@@ -1051,6 +1051,10 @@ def pull_updates(ch, ctx):
                     d["owner_id"] = m["chat"]["id"]
                     print("    → saved as the owner: poll reports and alerts go here")
                 continue
+            for k in ("my_chat_member", "channel_post", "message"):   # learn chat ids by title (channels.json "chat": "title:...")
+                c = (u.get(k) or {}).get("chat") or {}
+                if c.get("title") and ctx["live"]:
+                    d.setdefault("chats", {})[c["title"].strip().lower()] = c["id"]
             cm = u.get("my_chat_member")
             if cm:
                 print(f"  · bot membership changed: now '{cm['new_chat_member']['status']}' in a {cm['chat'].get('type')}")
@@ -1204,9 +1208,14 @@ def signal_post(ch, ctx, s, source):
     if not all(abs(v / last - 1) < 0.06 for v in plan.values() if isinstance(v, float)):
         print(f"  ! source signal {name} prices are far from the market ({last:.5g}), skipped"); return None
     plan["at_market"] = s.get("at_market", True) and abs(plan["entry"] - last) / last < 0.002
-    word = "Entrada a mercado." if plan["at_market"] else ("Entrada num recuo até a zona marcada." if s["side"] == "BUY"
-                                                          else "Entrada num repique até a zona marcada.")
-    plan["reason"] = f"Sinal {'de compra' if s['side'] == 'BUY' else 'de venda'} no {tf.upper()}. {word}"
+    if S.LANG == "es":
+        word = "Entrada a mercado." if plan["at_market"] else ("Entrada en un retroceso a la zona marcada." if s["side"] == "BUY"
+                                                              else "Entrada en un rebote a la zona marcada.")
+        plan["reason"] = f"Señal {'de compra' if s['side'] == 'BUY' else 'de venta'} en {tf.upper()}. {word}"
+    else:
+        word = "Entrada a mercado." if plan["at_market"] else ("Entrada num recuo até a zona marcada." if s["side"] == "BUY"
+                                                              else "Entrada num repique até a zona marcada.")
+        plan["reason"] = f"Sinal {'de compra' if s['side'] == 'BUY' else 'de venda'} no {tf.upper()}. {word}"
     p, c, res = S.render_entry_chart(name, tf, 70, basis, plan=plan)
     return finish_signal(ch, ctx, name, tf, res["plan"], p, c, "source")
 
@@ -1761,6 +1770,13 @@ def relay_update_text(text):
     message in Portuguese, with no names, links or handles. None when it is not about a trade or AI is off."""
     if not re.search(UPDATE_RX, text.upper()):
         return None
+    if S.LANG == "es":
+        out = ai("Traduce al español esta actualización de una operación (señal de trading) publicada en otro canal. "
+                 "Mantén exactamente los números, activos y niveles. No añadas nada, no inventes resultados. Quita nombres de "
+                 "personas y canales, @usuarios, enlaces e invitaciones. Responde solo con el texto traducido, corto, en el estilo "
+                 "de un canal de señales. Si el texto no trata de una operación (publicidad, invitación, saludo o charla), responde solo: SKIP",
+                 text[:1500], 600)
+        return None if not out or out.strip().upper().startswith("SKIP") else out
     out = ai("Traduza para o português do Brasil esta atualização de uma operação (sinal de trading) publicada em outro canal. "
              "Mantenha exatamente os números, ativos e níveis. Não acrescente nada, não invente resultados. Remova nomes de "
              "pessoas e canais, @usuários, links e convites. Responda só com o texto traduzido, curto, no estilo de um canal "
@@ -1804,6 +1820,12 @@ def relay(live):
             except Exception as e:
                 print(f"  ! could not read bot updates: {e}")
             cd = d.setdefault(str(rc["chat"]), {})
+            if str(rc["chat"]).startswith("title:"):       # destination known by title until the bot has seen its id
+                want = str(rc["chat"])[6:].strip().lower()
+                cid = od.get("chats", {}).get(want)
+                if not cid:
+                    print("  ! relay destination not seen by the bot yet: post anything in that channel"); continue
+                rc = dict(rc, chat=cid)
             done = cd.setdefault("relayed", {})
             S.use_branding(rc)
             ctx = dict(d=cd, live=live, basis=basis, hour=datetime.now(TZ).hour)

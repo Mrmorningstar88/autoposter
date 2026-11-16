@@ -39,5 +39,18 @@
     "quiet_hours": [],
     "token_env": "TG_BOT_TOKEN",
     "enabled": true
+  },
+  {
+    "chat": "title:Genio del Forex | VIP",
+    "mode": "relay",
+    "brand": "",
+    "lang": "es",
+    "markets": null,
+    "dm": "",
+    "signal_source": "AFX",
+    "footer": "",
+    "quiet_hours": [],
+    "token_env": "TELEGRAM_BOT_ES_TOKEN",
+    "enabled": true
   }
 ]
