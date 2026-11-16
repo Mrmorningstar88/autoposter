@@ -239,7 +239,7 @@ async function post(token, rc, s) {
 // ------------------------------------------------------------------ one run
 async function runBot(env, rc, log) {
   const token = env[rc.bot];
-  if (!token) { log.push(`${rc.lang}: no token`); return; }
+  if (!token) return;                         // not set yet: stay quiet (a log line would cost a KV write every minute)
   const key = `state:${rc.bot}`;
   const st = (await env.STATE.get(key, "json")) || { offset: 0, src: [], relayed: {} };
   let dirty = false;
