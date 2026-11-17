@@ -8,17 +8,8 @@
       "EURUSD",
       "GBPUSD"
     ],
-    "slots": [
-      9,
-      11,
-      13,
-      15,
-      19,
-      21
-    ],
-    "weekend_slots": [
-      11
-    ],
+    "slots": [],
+    "weekend_slots": [],
     "dm": "",
     "signal_source": "AFX",
     "footer": "",
