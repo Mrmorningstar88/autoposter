@@ -1,6 +1,7 @@
 // AFX relay on Cloudflare Workers (cron every minute). Same job as `python daily.py relay --live` on GitHub Actions:
 // every new signal of the source channel goes to each relay channel as a chart card (PT or ES, no signature).
-// Bindings: KV namespace STATE; secrets TG_BOT_TOKEN (PT bot) and TELEGRAM_BOT_ES_TOKEN (ES bot).
+// Bindings: KV namespace STATE; Workers AI as AI (optional: trade updates); secrets TG_BOT_TOKEN (PT bot) and
+// TELEGRAM_BOT_ES_TOKEN (ES bot).
 // The repo is public: never log message texts, chat titles or ids.
 
 const RELAYS = [
@@ -195,6 +196,29 @@ function textSignal(s, lang) {                 // no market data: the same level
 }
 
 // ------------------------------------------------------------------ telegram
+// ------------------------------------------------------------------ trade updates (TP hit, SL to entry, close...)
+// Same filter as daily.UPDATE_RX; the text is translated by Workers AI (no API key). Without the AI binding: skipped.
+const UPDATE_RX = /(^|[^A-Z0-9])(TP\s*\d?|SL|BE|STOP|TAKE|PIPS?|CLOSE|CLOSED|HIT)(?![A-Z0-9])|БЕЗУБЫТ|(^|[^А-ЯЁ])БУ(?![А-ЯЁ])|ЗАКРЫ|ФИКС|ПЕРЕНОС|ТЕЙК|СТОП|ПУНКТ|ОТМЕН|ВЗЯЛ|ДОБИРА|УСРЕДН|ТЕКУЩ|ВХОДИМ|ДЕРЖИМ/;
+const UPD_PROMPT = {
+  pt: "Traduza para o português do Brasil esta atualização de uma operação (sinal de trading) publicada em outro canal. " +
+      "Mantenha exatamente os números, ativos e níveis. Não acrescente nada, não invente resultados. Remova nomes de pessoas e " +
+      "canais, @usuários, links e convites. Responda só com o texto traduzido, curto, no estilo de um canal de sinais. Se o texto " +
+      "não for sobre uma operação (propaganda, convite, saudação ou conversa), responda só: SKIP",
+  es: "Traduce al español esta actualización de una operación (señal de trading) publicada en otro canal. Mantén exactamente " +
+      "los números, activos y niveles. No añadas nada, no inventes resultados. Quita nombres de personas y canales, @usuarios, " +
+      "enlaces e invitaciones. Responde solo con el texto traducido, corto, en el estilo de un canal de señales. Si el texto no " +
+      "trata de una operación (publicidad, invitación, saludo o charla), responde solo: SKIP",
+};
+
+async function updateText(env, text, lang) {
+  if (!env.AI || !UPDATE_RX.test(text.toUpperCase())) return null;
+  const r = await env.AI.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", { max_tokens: 400, messages: [
+    { role: "system", content: UPD_PROMPT[lang] }, { role: "user", content: text.slice(0, 1500) }] });
+  const out = String(r?.response || "").trim();
+  if (!out || out.toUpperCase().startsWith("SKIP") || /@|https?:|t\.me\//i.test(out)) return null;
+  return out.slice(0, 1000);
+}
+
 async function tg(token, method, body) {
   const r = await fetch(`https://api.telegram.org/bot${token}/${method}`, body instanceof FormData
     ? { method: "POST", body } : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) });
@@ -254,7 +278,18 @@ async function runBot(env, rc, log) {
       if (!String(p.chat.title || "").toLowerCase().includes(rc.source)) continue;
       const sig = parseSignal(p.text || p.caption || "");
       if (sig) st.src.push({ ...sig, ts: p.date, id: p.message_id });
-      log.push(`${rc.lang}: source post ${sig ? "signal " + sig.name + " " + sig.side : "no signal"}`);
+      let upd = "";
+      if (!sig && now - p.date < FRESH_MIN * 60 && !st.relayed["u" + p.message_id]) {
+        try {
+          const t = await updateText(env, p.text || p.caption || "", rc.lang);
+          if (t) {
+            const r = await tg(token, "sendMessage", { chat_id: rc.chat, text: t });
+            upd = r.ok ? ", update relayed" : ", update FAILED " + (r.description || "");
+            if (r.ok) st.relayed["u" + p.message_id] = now;
+          }
+        } catch (e) { upd = ", update error " + e.message; }
+      }
+      log.push(`${rc.lang}: source post ${sig ? "signal " + sig.name + " " + sig.side : "no signal"}${upd}`);
     }
     if (j.result.length < 100) break;
   }
