@@ -14,10 +14,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto = post whatever slot is due now, once (used by backup timers) · relay = relay new source signals to the relay channels now · slot = run the chosen slot now · test = post one entry chart · report = poll history · emoji = list animated emoji packs (artifact)"
+        description: "auto = post whatever slot is due now, once (used by backup timers) · relay = relay new source signals to the relay channels now · watch = relay every 2 minutes for ~5.5 hours, then start the next watch (keeps the VIP relay live; GitHub cron alone fires only a few times a day) · slot = run the chosen slot now · test = post one entry chart · report = poll history · emoji = list animated emoji packs (artifact)"
         default: "slot"
         type: choice
-        options: [slot, auto, relay, test, report, scrub, emoji]
+        options: [slot, auto, relay, watch, test, report, scrub, emoji]
       hour:
         description: "BRT slot for slot mode"
         default: "9"
@@ -41,7 +41,7 @@ permissions:
 jobs:
   post:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: ${{ inputs.mode == 'watch' && 350 || 20 }}
     steps:
       - uses: actions/checkout@v4
       - name: Restore memory (posted signals, polls, source channel position)
@@ -78,7 +78,9 @@ jobs:
           OWNER_USERNAME: ${{ secrets.OWNER_USERNAME }}
         run: |
           H=""
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" != "auto" ]; then
+          if [ "${{ inputs.mode }}" = "watch" ]; then
+            echo "hour=" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.mode }}" != "auto" ]; then
             H="${{ inputs.hour }}"
             echo "hour=$H" >> "$GITHUB_OUTPUT"
           else
@@ -90,6 +92,9 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.mode }}" = "auto" ] || [ "${{ inputs.mode }}" = "relay" ]; then
             R=$(python3 slots.py relay state.json || true)
             [ "${{ inputs.mode }}" = "relay" ] && R=1
+          fi
+          if [ "${{ inputs.mode }}" = "watch" ]; then
+            R=1
           fi
           echo "relay=$R" >> "$GITHUB_OUTPUT"
           [ -n "$R" ] && echo "relay channels: new source posts to relay"
@@ -127,6 +132,11 @@ jobs:
             workflow_dispatch/scrub)  python daily.py scrub ${{ inputs.message_ids }} $LIVE ;;
             workflow_dispatch/emoji)  python emoji_catalog.py ${{ inputs.message_ids }} ;;
             workflow_dispatch/relay)  python daily.py relay $LIVE ;;
+            workflow_dispatch/watch)  END=$(( $(date +%s) + 330*60 ))
+                                      while [ "$(date +%s)" -lt "$END" ]; do
+                                        python daily.py relay $LIVE || echo "::warning::relay pass failed, retrying in 2 min"
+                                        sleep 120
+                                      done ;;
             *)  RC=0
                 [ -n "${{ steps.slot.outputs.hour }}" ] && { python daily.py run ${{ steps.slot.outputs.hour }} $LIVE || RC=1; }
                 if [ -n "${{ steps.slot.outputs.relay }}" ] || [ "${{ github.event_name }}" = "schedule" ]; then
@@ -163,6 +173,18 @@ jobs:
             charts/*.png
             charts/*.json
           retention-days: 7
+      - name: Keep the VIP relay watch running
+        if: always() && inputs.mode != 'test' && inputs.mode != 'report' && inputs.mode != 'scrub' && inputs.mode != 'emoji'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          R="${{ github.repository }}"
+          if [ "${{ inputs.mode }}" != "watch" ]; then      # another run: start a watch only if none is running or queued
+            N=$(gh run list -R "$R" --workflow post.yml --event workflow_dispatch --limit 20 --json status,displayTitle,databaseId \
+                -q '[.[] | select(.status != "completed") | select(.databaseId != ${{ github.run_id }})] | length' 2>/dev/null || echo 1)
+            [ "$N" = "0" ] || { echo "a run is already running or queued"; exit 0; }
+          fi
+          gh workflow run post.yml -R "$R" --ref main -f mode=watch && echo "next watch started"
       - name: Keep the schedule alive
         if: always() && github.event_name == 'schedule'
         env:
